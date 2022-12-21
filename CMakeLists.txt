@@ -221,7 +221,6 @@ elseif (EMSCRIPTEN)
     "-Os"
     "-s ALLOW_MEMORY_GROWTH=1"
     "-s ASSERTIONS=0"
-    "-s DISABLE_EXCEPTION_CATCHING=0"
     "-s ERROR_ON_UNDEFINED_SYMBOLS=1"
   )
 else()
