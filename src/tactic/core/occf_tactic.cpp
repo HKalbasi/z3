@@ -23,7 +23,7 @@ Revision History:
 --*/
 #include "tactic/tactical.h"
 #include "tactic/core/occf_tactic.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 class occf_tactic : public tactic {
     struct     imp {
@@ -195,6 +195,8 @@ public:
     ~occf_tactic() override {
         dealloc(m_imp);
     }
+
+    char const* name() const override { return "occf"; }
 
     void updt_params(params_ref const & p) override {}
     void collect_param_descrs(param_descrs & r) override {}

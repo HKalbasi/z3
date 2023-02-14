@@ -19,7 +19,7 @@ Revision History:
 #include "tactic/tactical.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/ast_smt2_pp.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/simplifiers/bound_manager.h"
 
 struct is_unbounded_proc {
     struct found {};
@@ -41,7 +41,8 @@ struct is_unbounded_proc {
 bool is_unbounded(goal const & g) {
     ast_manager & m = g.m();
     bound_manager bm(m);
-    bm(g);
+    for (unsigned i = 0; i < g.size(); ++i)
+        bm(g.form(i), g.dep(i), g.pr(i));
     is_unbounded_proc proc(bm);
     return test(g, proc);
 }
@@ -51,7 +52,6 @@ public:
     result operator()(goal const & g) override {
         return is_unbounded(g);
     }
-    ~is_unbounded_probe() override {}
 };
 
 probe * mk_is_unbounded_probe() {
@@ -145,10 +145,12 @@ public:
     ~add_bounds_tactic() override {
         dealloc(m_imp);
     }
+
+    char const* name() const override { return "add_bounds"; }
     
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {

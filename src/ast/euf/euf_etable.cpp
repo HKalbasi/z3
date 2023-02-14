@@ -72,7 +72,7 @@ namespace euf {
     void * etable::mk_table_for(unsigned arity, func_decl * d) {
         void * r;
         SASSERT(d->get_arity() >= 1);
-        SASSERT(arity >= d->get_arity() || d->is_associative());
+        SASSERT(arity >= d->get_arity() || d->is_associative() || d->is_left_associative());
         switch (arity) {
         case 1:
             r = TAG(void*, alloc(unary_table), UNARY);
@@ -201,8 +201,6 @@ namespace euf {
     enode_bool_pair etable::insert(enode * n) {
         // it doesn't make sense to insert a constant.
         SASSERT(n->num_args() > 0);
-        SASSERT(!m_manager.is_and(n->get_expr()));
-        SASSERT(!m_manager.is_or(n->get_expr()));
         enode * n_prime;
         void * t = get_table(n); 
         switch (static_cast<table_kind>(GET_TAG(t))) {

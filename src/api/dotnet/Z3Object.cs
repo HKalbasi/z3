@@ -50,12 +50,7 @@ namespace Microsoft.Z3
                 m_n_obj = IntPtr.Zero;                
             }
 
-            if (m_ctx != null)
-            {
-                if (Interlocked.Decrement(ref m_ctx.refCount) == 0)
-                    GC.ReRegisterForFinalize(m_ctx);
-                m_ctx = null;
-            }
+            m_ctx = null;
 
             GC.SuppressFinalize(this);
         }
@@ -76,19 +71,15 @@ namespace Microsoft.Z3
         internal Z3Object(Context ctx)
         {
             Debug.Assert(ctx != null);
-
-            Interlocked.Increment(ref ctx.refCount);
             m_ctx = ctx;
         }
 
         internal Z3Object(Context ctx, IntPtr obj)
         {
             Debug.Assert(ctx != null);
-
-            Interlocked.Increment(ref ctx.refCount);
             m_ctx = ctx;
-            IncRef(obj);
             m_n_obj = obj;
+            IncRef(obj);
         }
 
         internal virtual void IncRef(IntPtr o) { }
@@ -109,11 +100,14 @@ namespace Microsoft.Z3
 
         internal static IntPtr GetNativeObject(Z3Object s)
         {
-            if (s == null) return new IntPtr();
+            if (s == null) return IntPtr.Zero;
             return s.NativeObject;
         }
 
-        internal Context Context
+        /// <summary>
+        /// Access Context object 
+        /// </summary>
+	    public Context Context
         {
             get 
             {
@@ -131,24 +125,10 @@ namespace Microsoft.Z3
             return an;
         }
 
-        internal static IntPtr[] EnumToNative<T>(IEnumerable<T> a) where T : Z3Object
-        {
-
-            if (a == null) return null;
-            IntPtr[] an = new IntPtr[a.Count()];
-            int i = 0;
-            foreach (var ai in a)
-            {
-                if (ai != null) an[i] = ai.NativeObject;
-                ++i;
-            }
-            return an;
-        }
-
         internal static uint ArrayLength(Z3Object[] a)
         {
             return (a == null)?0:(uint)a.Length;
         }
-        #endregion
+#endregion
     }
 }

@@ -7,7 +7,7 @@
 
   Abstract:
 
-    intervals with depedency tracking.
+    intervals with dependency tracking.
 
   Author:
   Nikolaj Bjorner (nbjorner)
@@ -172,6 +172,7 @@ public:
     void set_upper_is_inf(interval& a, bool inf) const { m_config.set_upper_is_inf(a, inf); }
     void set_lower_dep(interval& a, u_dependency* d) const { m_config.set_lower_dep(a, d); }
     void set_upper_dep(interval& a, u_dependency* d) const { m_config.set_upper_dep(a, d); }
+    void reset(interval& a) const { set_lower_is_inf(a, true); set_upper_is_inf(a, true); }
     void set_value(interval& a, rational const& n) const { 
         set_lower(a, n); 
         set_upper(a, n); 
@@ -222,7 +223,6 @@ public:
 
     template <enum with_deps_t wd>
     void mul(const rational& r, const interval& a, interval& b) const {
-        if (r.is_zero()) return;
         m_imanager.mul(r.to_mpq(), a, b);
         if (wd == with_deps) {
             auto lower_dep = a.m_lower_dep;
@@ -332,6 +332,7 @@ public:
     }
     mpq const& lower(interval const& a) const { return m_config.lower(a); }
     mpq const& upper(interval const& a) const { return m_config.upper(a); }
+
     bool is_empty(interval const& a) const;
     void set_interval_for_scalar(interval&, const rational&);
     template <typename T> 

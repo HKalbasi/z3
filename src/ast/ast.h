@@ -272,6 +272,7 @@ public:
 
     family_id get_family_id() const { return m_family_id; }
     decl_kind get_decl_kind() const { return m_kind; }
+    bool is_decl_of(family_id fid, decl_kind k) const { return m_family_id == fid && k == m_kind; }
     unsigned get_num_parameters() const { return m_parameters.size(); }
     parameter const & get_parameter(unsigned idx) const { return m_parameters[idx]; }
     parameter const * get_parameters() const { return m_parameters.begin(); }
@@ -367,8 +368,8 @@ public:
         decl_info(family_id, k, num_parameters, parameters, private_parameters), m_num_elements(num_elements) {
     }
 
-    sort_info(decl_info const& di, sort_size const& num_elements) : 
-        decl_info(di), m_num_elements(num_elements) {}
+    sort_info(decl_info && di, sort_size const& num_elements) :
+        decl_info(std::move(di)), m_num_elements(num_elements) {}
 
     bool is_infinite() const { return m_num_elements.is_infinite(); }
     bool is_very_big() const { return m_num_elements.is_very_big(); }
@@ -530,6 +531,13 @@ public:
 #endif
 };
 
+#define MATCH_QUATARY(_MATCHER_)                                                                                \
+    bool _MATCHER_(expr const* n, expr*& a1, expr*& a2, expr *& a3, expr *& a4) const {                                \
+        if (_MATCHER_(n) && to_app(n)->get_num_args() == 4) {                                                   \
+            a1 = to_app(n)->get_arg(0); a2 = to_app(n)->get_arg(1); a3 = to_app(n)->get_arg(2); a4 = to_app(n)->get_arg(3); return true; } \
+        return false;                                                                                           \
+    }
+
 #define MATCH_TERNARY(_MATCHER_)                                                                                \
     bool _MATCHER_(expr const* n, expr*& a1, expr*& a2, expr *& a3) const {                                     \
         if (_MATCHER_(n) && to_app(n)->get_num_args() == 3) {                                                   \
@@ -572,11 +580,12 @@ protected:
 
     decl(ast_kind k, symbol const & name, decl_info * info):ast(k), m_name(name), m_info(info) {}
 public:
-    unsigned get_decl_id() const { SASSERT(get_id() >= c_first_decl_id); return get_id() - c_first_decl_id; }
+    unsigned get_small_id() const { SASSERT(get_id() >= c_first_decl_id); return get_id() - c_first_decl_id; }
     symbol const & get_name() const { return m_name; }
     decl_info * get_info() const { return m_info; }
     family_id get_family_id() const { return m_info == nullptr ? null_family_id : m_info->get_family_id(); }
     decl_kind get_decl_kind() const { return m_info == nullptr ? null_decl_kind : m_info->get_decl_kind(); }
+    bool is_decl_of(family_id fid, decl_kind k) const { return m_info && m_info->is_decl_of(fid, k); }
     unsigned get_num_parameters() const { return m_info == nullptr ? 0 : m_info->get_num_parameters(); }
     parameter const & get_parameter(unsigned idx) const { return m_info->get_parameter(idx); }
     parameter const * get_parameters() const { return m_info == nullptr ? nullptr : m_info->get_parameters(); }
@@ -671,6 +680,9 @@ protected:
 public:
 
     sort* get_sort() const;
+
+    unsigned get_small_id() const { return get_id(); }
+    
 };
 
 // -----------------------------------
@@ -715,10 +727,12 @@ public:
     unsigned get_num_parameters() const { return get_decl()->get_num_parameters(); }
     parameter const& get_parameter(unsigned idx) const { return get_decl()->get_parameter(idx); }
     parameter const* get_parameters() const { return get_decl()->get_parameters(); }
-    bool is_app_of(family_id fid, decl_kind k) const { return get_family_id() == fid && get_decl_kind() == k; }
+    bool is_app_of(family_id fid, decl_kind k) const { return m_decl->is_decl_of(fid, k); }
     unsigned get_num_args() const { return m_num_args; }
     expr * get_arg(unsigned idx) const { SASSERT(idx < m_num_args); return m_args[idx]; }
     expr * const * get_args() const { return m_args; }
+    std::tuple<expr*,expr*> args2() const { SASSERT(m_num_args == 2); return {get_arg(0), get_arg(1)}; }
+    std::tuple<expr*,expr*,expr*> args3() const { SASSERT(m_num_args == 3); return {get_arg(0), get_arg(1), get_arg(2)}; }
     unsigned get_size() const { return get_obj_size(get_num_args()); }
     expr * const * begin() const { return m_args; }
     expr * const * end() const { return m_args + m_num_args; }
@@ -845,7 +859,7 @@ class quantifier : public expr {
     char                m_patterns_decls[0];
 
     static unsigned get_obj_size(unsigned num_decls, unsigned num_patterns, unsigned num_no_patterns) {
-        return sizeof(quantifier) + num_decls * (sizeof(sort *) + sizeof(symbol)) + (num_patterns + num_no_patterns) * sizeof(expr*);
+        return (unsigned)(sizeof(quantifier) + num_decls * (sizeof(sort *) + sizeof(symbol)) + (num_patterns + num_no_patterns) * sizeof(expr*));
     }
 
     quantifier(quantifier_kind k, unsigned num_decls, sort * const * decl_sorts, symbol const * decl_names, expr * body, sort* s,
@@ -1019,7 +1033,7 @@ protected:
     friend class ast_manager;
 
 public:
-    virtual ~decl_plugin() {}
+    virtual ~decl_plugin() = default;
     virtual void finalize() {}
 
 
@@ -1049,6 +1063,12 @@ public:
        We need this because some plugin values are too expensive too canonize.
     */
     virtual bool is_value(app * a) const { return false; }
+
+
+    /**
+       \brief return true if the expression can be used as a model value.
+     */
+    virtual bool is_model_value(app* a) const { return is_value(a); }
 
     /**
        \brief Return true if \c a is a unique plugin value.
@@ -1367,6 +1387,7 @@ inline bool is_app_of(expr const * n, family_id fid, decl_kind k) { return n->ge
 inline bool is_sort_of(sort const * s, family_id fid, decl_kind k) { return s->is_sort_of(fid, k); }
 inline bool is_uninterp_const(expr const * n) { return n->get_kind() == AST_APP && to_app(n)->get_num_args() == 0 && to_app(n)->get_family_id() == null_family_id; }
 inline bool is_uninterp(expr const * n) { return n->get_kind() == AST_APP && to_app(n)->get_family_id() == null_family_id; }
+inline bool is_uninterp(func_decl const * n) { return n->get_family_id() == null_family_id; }
 inline bool is_decl_of(func_decl const * d, family_id fid, decl_kind k) { return d->get_family_id() == fid && d->get_decl_kind() == k; }
 inline bool is_ground(expr const * n) { return is_app(n) && to_app(n)->is_ground(); }
 inline bool is_non_ground(expr const * n) { return ( ! is_ground(n)); }
@@ -1399,6 +1420,7 @@ inline bool has_labels(expr const * n) {
 class some_value_proc {
 public:
     virtual expr * operator()(sort * s) = 0;
+    virtual ~some_value_proc() = default;
 };
 
 // -----------------------------------
@@ -1608,7 +1630,8 @@ public:
     bool is_lambda_def(quantifier* q) const { return q->get_qid() == m_lambda_def; }
     void add_lambda_def(func_decl* f, quantifier* q);
     quantifier* is_lambda_def(func_decl* f);
-    
+    quantifier* is_lambda_def(app* e) { return is_lambda_def(e->get_decl()); }
+    obj_map<func_decl, quantifier*> const& lambda_defs() const { return m_lambda_defs; }
 
     symbol const& lambda_def_qid() const { return m_lambda_def; }
 
@@ -1862,6 +1885,8 @@ public:
         return mk_app(decl, 3, args);
     }
 
+    app * mk_app(symbol const& name, unsigned n, expr* const* args, sort* range);
+
     app * mk_const(func_decl * decl) {
         SASSERT(decl->get_arity() == 0);
         return mk_app(decl, static_cast<unsigned>(0), static_cast<expr**>(nullptr));
@@ -1907,9 +1932,8 @@ public:
         return mk_fresh_const(prefix.c_str(), s, skolem);        
     }
 
-    app * mk_fresh_const(symbol const& prefix, sort * s, bool skolem = true) { 
-        auto str = prefix.str();
-        return mk_fresh_const(str.c_str(), s, skolem);
+    app * mk_fresh_const(symbol const& prefix, sort * s, bool skolem = true) {
+        return mk_const(mk_fresh_func_decl(prefix, symbol::null, 0, nullptr, s, skolem));
     }
 
     symbol mk_fresh_var_name(char const * prefix = nullptr);
@@ -2311,7 +2335,7 @@ public:
     proof * mk_th_assumption_add(proof* pr, expr* e);
     proof * mk_th_lemma_add(proof* pr, expr* e);
     proof * mk_redundant_del(expr* e);
-    proof * mk_clause_trail(unsigned n, proof* const* ps);
+    proof * mk_clause_trail(unsigned n, expr* const* ps);
 
     proof * mk_def_axiom(expr * ax);
     proof * mk_unit_resolution(unsigned num_proofs, proof * const * proofs);
@@ -2567,11 +2591,11 @@ typedef ast_ref_fast_mark2   expr_ref_fast_mark2;
    when N is deleted.
 */
 class ast_mark {
-    struct decl2uint { unsigned operator()(decl const & d) const { return d.get_decl_id(); } };
+    struct decl2uint { unsigned operator()(decl const & d) const { return d.get_small_id(); } };
     obj_mark<expr>                        m_expr_marks;
     obj_mark<decl, bit_vector, decl2uint> m_decl_marks;
 public:
-    virtual ~ast_mark() {}
+    virtual ~ast_mark() = default;
     bool is_marked(ast * n) const;
     virtual void mark(ast * n, bool flag);
     virtual void reset();

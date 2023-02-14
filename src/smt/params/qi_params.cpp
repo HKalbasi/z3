@@ -28,6 +28,7 @@ void qi_params::updt_params(params_ref const & _p) {
     m_mbqi_trace = p.mbqi_trace();
     m_mbqi_force_template = p.mbqi_force_template();
     m_mbqi_id = p.mbqi_id();
+    m_qe_lite = p.q_lite();
     m_qi_profile = p.qi_profile();
     m_qi_profile_freq = p.qi_profile_freq();
     m_qi_max_instances = p.qi_max_instances();
@@ -38,7 +39,7 @@ void qi_params::updt_params(params_ref const & _p) {
     m_qi_quick_checker = static_cast<quick_checker_mode>(p.qi_quick_checker());
 }
 
-#define DISPLAY_PARAM(X) out << #X"=" << X << std::endl;
+#define DISPLAY_PARAM(X) out << #X"=" << X << '\n';
 
 void qi_params::display(std::ostream & out) const {
     DISPLAY_PARAM(m_qi_cost);

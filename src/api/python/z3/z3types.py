@@ -120,6 +120,12 @@ class TacticObj(ctypes.c_void_p):
     def from_param(obj):
         return obj
 
+class SimplifierObj(ctypes.c_void_p):
+    def __init__(self, simplifier):
+        self._as_parameter_ = simplifier
+
+    def from_param(obj):
+        return obj
 
 class ProbeObj(ctypes.c_void_p):
     def __init__(self, probe):
@@ -212,6 +218,13 @@ class Params(ctypes.c_void_p):
 class ParamDescrs(ctypes.c_void_p):
     def __init__(self, paramdescrs):
         self._as_parameter_ = paramdescrs
+
+    def from_param(obj):
+        return obj
+
+class ParserContextObj(ctypes.c_void_p):
+    def __init__(self, pc):
+        self._as_parameter_ = pc
 
     def from_param(obj):
         return obj

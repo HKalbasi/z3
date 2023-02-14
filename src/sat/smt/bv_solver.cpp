@@ -55,7 +55,16 @@ namespace bv {
         m_ackerman(*this),
         m_bb(m, get_config()),
         m_find(*this) {
-        m_bb.set_flat(false);
+        m_bb.set_flat_and_or(false);
+    }
+
+    bool solver::is_fixed(euf::theory_var v, expr_ref& val, sat::literal_vector& lits) {
+        numeral n;
+        if (!get_fixed_value(v, n))
+            return false;
+        val = bv.mk_numeral(n, m_bits[v].size());
+        lits.append(m_bits[v]);
+        return true;
     }
 
     void solver::fixed_var_eh(theory_var v1) {
@@ -158,8 +167,8 @@ namespace bv {
         SASSERT(m_bits[v1][idx] == ~m_bits[v2][idx]);
         TRACE("bv", tout << "found new diseq axiom\n" << pp(v1) << pp(v2););
         m_stats.m_num_diseq_static++;
-        expr_ref eq = mk_var_eq(v1, v2);
-        add_unit(~ctx.internalize(eq, false, false, m_is_redundant));
+        expr_ref eq(m.mk_eq(var2expr(v1), var2expr(v2)), m);
+        add_unit(~ctx.internalize(eq, false, false));
     }
 
     std::ostream& solver::display(std::ostream& out, theory_var v) const {
@@ -199,6 +208,35 @@ namespace bv {
         if (is_bv(eq.v1())) {
             m_find.merge(eq.v1(), eq.v2());
             VERIFY(eq.is_eq());
+            return;
+        }
+        euf::enode* n1 = var2enode(eq.v1());
+
+        auto propagate_bv2int = [&](euf::enode* bv2int) {
+            euf::enode* bv2int_arg = bv2int->get_arg(0);
+            for (euf::enode* p : euf::enode_parents(n1->get_root())) {
+                if (bv.is_int2bv(p->get_expr()) && p->get_sort() == bv2int_arg->get_sort() && p->get_root() != bv2int_arg->get_root()) {
+                    theory_var v1 = get_th_var(p);
+                    theory_var v2 = get_th_var(bv2int_arg);
+                    SASSERT(v1 != euf::null_theory_var);
+                    SASSERT(v2 != euf::null_theory_var);
+                    ctx.propagate(p, bv2int_arg, mk_bv2int_justification(v1, v2, n1, p->get_arg(0), bv2int));
+                    break;
+                }
+            }
+        };
+
+        if (m_bv2ints.size() < n1->class_size()) {
+            for (auto* bv2int : m_bv2ints) {
+                if (bv2int->get_root() == n1->get_root())
+                    propagate_bv2int(bv2int);
+            }
+        }
+        else {
+            for (euf::enode* bv2int : euf::enode_class(n1)) {                
+                if (bv.is_bv2int(bv2int->get_expr()))
+                    propagate_bv2int(bv2int);
+            }
         }
     }
 
@@ -254,6 +292,8 @@ namespace bv {
             ++m_stats.m_num_ne2bit;
             s().assign(consequent, mk_ne2bit_justification(undef_idx, v1, v2, consequent, antecedent));
         }
+        else if (!get_config().m_bv_eq_axioms) 
+            ;
         else if (s().at_search_lvl()) {
             force_push();
             assert_ackerman(v1, v2);
@@ -273,7 +313,7 @@ namespace bv {
         case bv_justification::kind_t::eq2bit:
             SASSERT(s().value(c.m_antecedent) == l_true);
             r.push_back(c.m_antecedent);
-            ctx.add_antecedent(var2enode(c.m_v1), var2enode(c.m_v2));
+            ctx.add_antecedent(probing, var2enode(c.m_v1), var2enode(c.m_v2));
             break;
         case bv_justification::kind_t::ne2bit: {
             r.push_back(c.m_antecedent);
@@ -340,6 +380,11 @@ namespace bv {
             r.push_back(b);
             break;
         }
+        case bv_justification::kind_t::bv2int: {
+            ctx.add_antecedent(probing, c.a, c.b);
+            ctx.add_antecedent(probing, c.a, c.c);
+            break;
+        }
         }
         if (!probing && ctx.use_drat())
             log_drat(c);
@@ -347,53 +392,126 @@ namespace bv {
 
     void solver::log_drat(bv_justification const& c) {
         // introduce dummy literal for equality.
-        sat::literal leq(s().num_vars() + 1, false);
-        expr_ref eq(m);
-        if (c.m_kind != bv_justification::kind_t::bit2ne) {
-            expr* e1 = var2expr(c.m_v1);
-            expr* e2 = var2expr(c.m_v2);
-            eq = m.mk_eq(e1, e2);       
-            ctx.drat_eq_def(leq, eq);
+        sat::literal leq1(s().num_vars() + 1, false);
+        sat::literal leq2(s().num_vars() + 2, false);
+        expr_ref eq1(m), eq2(m);
+        expr* a1 = nullptr, *a2 = nullptr, *b1 = nullptr, *b2 = nullptr;
+        
+        if (c.m_kind == bv_justification::kind_t::bv2int) {
+            a1 = c.a->get_expr();
+            a2 = c.b->get_expr();
+            b1 = c.a->get_expr();
+            b2 = c.c->get_expr();
         }
+        else if (c.m_kind != bv_justification::kind_t::bit2ne) {
+            a1 = var2expr(c.m_v1);
+            a2 = var2expr(c.m_v2);
+        }
+
+        if (a1) {
+            eq1 = m.mk_eq(a1, a2);
+            ctx.set_tmp_bool_var(leq1.var(), eq1);
+        }
+
+        if (b1) {
+            eq2 = m.mk_eq(b1, b2);
+            ctx.set_tmp_bool_var(leq2.var(), eq2);
+        }
+
+        ctx.push(value_trail(m_lit_tail));
+        ctx.push(restore_vector(m_proof_literals));
 
         sat::literal_vector lits;
         switch (c.m_kind) {
         case bv_justification::kind_t::eq2bit:
-            lits.push_back(~leq);
             lits.push_back(~c.m_antecedent);
             lits.push_back(c.m_consequent);
+            m_proof_literals.append(lits);
+            lits.push_back(~leq1);
             break;
         case bv_justification::kind_t::ne2bit:
             get_antecedents(c.m_consequent, c.to_index(), lits, true);
-            lits.push_back(c.m_consequent);
-            break;
-        case bv_justification::kind_t::bit2eq:      
-            get_antecedents(leq, c.to_index(), lits, true);
             for (auto& lit : lits)
                 lit.neg();
-            lits.push_back(leq);
+            lits.push_back(c.m_consequent);
+            m_proof_literals.append(lits);
+            break;
+        case bv_justification::kind_t::bit2eq:      
+            get_antecedents(leq1, c.to_index(), lits, true);
+            for (auto& lit : lits)
+                lit.neg();
+            m_proof_literals.append(lits);
+            lits.push_back(leq1);
             break;
         case bv_justification::kind_t::bit2ne: 
             get_antecedents(c.m_consequent, c.to_index(), lits, true);
+            lits.push_back(~c.m_consequent);            
             for (auto& lit : lits)
                 lit.neg();
-            lits.push_back(c.m_consequent);            
+            m_proof_literals.append(lits);
+            break;
+        case bv_justification::kind_t::bv2int:
+            get_antecedents(leq1, c.to_index(), lits, true);
+            get_antecedents(leq2, c.to_index(), lits, true);
+            for (auto& lit : lits)
+                lit.neg();
+            m_proof_literals.append(lits);
+            lits.push_back(leq1);
+            lits.push_back(leq2);
             break;
         }
-        ctx.get_drat().add(lits, status());
+        
+        m_lit_head = m_lit_tail;
+        m_lit_tail = m_proof_literals.size();        
+        proof_hint* ph = new (get_region()) proof_hint(c.m_kind, m_proof_literals, m_lit_head, m_lit_tail, a1, a2, b1, b2);
+        auto st = sat::status::th(false, m.get_basic_family_id(), ph);
+        ctx.get_drat().add(lits, st);
+        m_lit_head = m_lit_tail;
         // TBD, a proper way would be to delete the lemma after use.
+        ctx.set_tmp_bool_var(leq1.var(), nullptr);
+        ctx.set_tmp_bool_var(leq2.var(), nullptr);
     }
 
-    void solver::asserted(literal l) {
-        
+    expr* solver::proof_hint::get_hint(euf::solver& s) const {
+        ast_manager& m = s.get_manager();
+        sort* proof = m.mk_proof_sort();
+        expr_ref_vector& args = s.expr_args();
+        ptr_buffer<sort> sorts;
+        for (unsigned i = m_lit_head; i < m_lit_tail; ++i) 
+            args.push_back(s.literal2expr(m_proof_literals[i]));
+        if (m_kind == bv_justification::kind_t::eq2bit)
+            args.push_back(m.mk_not(m.mk_eq(a1, a2)));            
+        else if (a1) 
+            args.push_back(m.mk_eq(a1, a2));
+        if (b1) 
+            args.push_back(m.mk_eq(b1, b2));
+        for (auto * arg : args)
+            sorts.push_back(arg->get_sort());
+        symbol th;
+        switch (m_kind) {
+        case bv_justification::kind_t::eq2bit:
+            th = "eq2bit"; break;
+        case bv_justification::kind_t::ne2bit:
+            th = "ne2bit"; break;
+        case bv_justification::kind_t::bit2eq:      
+            th = "bit2eq"; break;
+        case bv_justification::kind_t::bit2ne: 
+            th = "bit2ne"; break;
+        case bv_justification::kind_t::bv2int:
+            th = "bv2int"; break;
+        }
+        func_decl* f = m.mk_func_decl(th, sorts.size(), sorts.data(), proof);
+        return m.mk_app(f, args);
+    };
+
+    void solver::asserted(literal l) {        
         atom* a = get_bv2a(l.var());
         TRACE("bv", tout << "asserted: " << l << "\n";);
         if (a) {
             force_push();
             m_prop_queue.push_back(propagation_item(a));            
-            for (auto p : a->m_bit2occ) {
+            for (auto p : a->m_bit2occ) 
                 del_eq_occurs(p.first, p.second);
-            }
         }
     }
 
@@ -478,6 +596,9 @@ namespace bv {
             if (!assign_bit(bit2, v1, v2, idx, bit1, false))
                 break;
         }
+        if (s().value(m_bits[v1][m_wpos[v1]]) != l_undef)
+            find_wpos(v1);
+
         return num_assigned > 0;
     }
 
@@ -623,7 +744,9 @@ namespace bv {
             return out << "bv <- v" << v1 << "[" << cidx << "] != v" << v2 << "[" << cidx << "] " << m_bits[v1][cidx] << " != " << m_bits[v2][cidx];
         }
         case bv_justification::kind_t::ne2bit: 
-            return out << "bv <- " << m_bits[v1] << " != " << m_bits[v2] << " @" << cidx;                                                 
+            return out << "bv <- " << m_bits[v1] << " != " << m_bits[v2] << " @" << cidx;
+        case bv_justification::kind_t::bv2int:
+            return out << "bv <- v" << v1 << " == v" << v2 << " <== " << ctx.bpp(c.a) << " == " << ctx.bpp(c.b) << " == " << ctx.bpp(c.c);
         default:
             UNREACHABLE();
             break;
@@ -670,25 +793,33 @@ namespace bv {
         for (theory_var i = 0; i < static_cast<theory_var>(get_num_vars()); ++i)
             if (find(i) != i)
                 result->m_find.set_root(i, find(i));
-        result->m_prop_queue.append(m_prop_queue);
-        for (unsigned i = 0; i < m_bool_var2atom.size(); ++i) {
-            atom* a = m_bool_var2atom[i];
-            if (!a)
-                continue;
 
-            atom* new_a = new (result->get_region()) atom(i);
-            result->m_bool_var2atom.setx(i, new_a, nullptr);
-            for (auto vp : *a)
-                new_a->m_occs = new (result->get_region()) var_pos_occ(vp.first, vp.second, new_a->m_occs);
-            for (eq_occurs const& occ : a->eqs()) {
+        auto clone_atom = [&](atom const& a) {
+            atom* new_a = new (result->get_region()) atom(a.m_bv);
+            result->m_bool_var2atom.setx(a.m_bv, new_a, nullptr);
+            for (auto [v, p] : a)
+                new_a->m_occs = new (result->get_region()) var_pos_occ(v, p, new_a->m_occs);
+            for (eq_occurs const& occ : a.eqs()) {
                 expr* e = occ.m_node->get_expr();
                 expr_ref e2(tr(e), tr.to());
                 euf::enode* n = ctx.get_enode(e2);
+                SASSERT(tr.to().contains(e2));
                 new_a->m_eqs = new (result->get_region()) eq_occurs(occ.m_bv1, occ.m_bv2, occ.m_idx, occ.m_v1, occ.m_v2, occ.m_literal, n, new_a->m_eqs);
             }
-            new_a->m_def = a->m_def;
-            new_a->m_var = a->m_var;
-            // validate_atoms();
+            new_a->m_def = a.m_def;
+            new_a->m_var = a.m_var;           
+        };
+
+        for (atom* a : m_bool_var2atom) 
+            if (a)
+                clone_atom(*a);
+        // validate_atoms();        
+
+        for (auto p : m_prop_queue) {
+            propagation_item q = p;
+            if (p.is_atom())
+                q = propagation_item(result->get_bv2a(p.m_atom->m_bv));
+            result->m_prop_queue.push_back(q);
         }
         return result;
     }
@@ -729,6 +860,7 @@ namespace bv {
     void solver::merge_eh(theory_var r1, theory_var r2, theory_var v1, theory_var v2) {
 
         TRACE("bv", tout << "merging: v" << v1 << " #" << var2enode(v1)->get_expr_id() << " v" << v2 << " #" << var2enode(v2)->get_expr_id() << "\n";);
+
         if (!merge_zero_one_bits(r1, r2)) {
             TRACE("bv", tout << "conflict detected\n";);
             return; // conflict was detected
@@ -767,28 +899,41 @@ namespace bv {
         void* mem = get_region().allocate(bv_justification::get_obj_size());
         sat::constraint_base::initialize(mem, this);
         auto* constraint = new (sat::constraint_base::ptr2mem(mem)) bv_justification(v1, v2, c, a);
-        return sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        auto jst = sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        TRACE("bv", tout << jst << " " << constraint << "\n");
+        return jst;
     }
 
     sat::ext_justification_idx solver::mk_bit2eq_justification(theory_var v1, theory_var v2) {
         void* mem = get_region().allocate(bv_justification::get_obj_size());
         sat::constraint_base::initialize(mem, this);
         auto* constraint = new (sat::constraint_base::ptr2mem(mem)) bv_justification(v1, v2);
-        return constraint->to_index();
+        auto jst = constraint->to_index();
+        return jst;
     }
 
     sat::justification solver::mk_bit2ne_justification(unsigned idx, sat::literal c) {
         void* mem = get_region().allocate(bv_justification::get_obj_size());
         sat::constraint_base::initialize(mem, this);
         auto* constraint = new (sat::constraint_base::ptr2mem(mem)) bv_justification(idx, c);
-        return sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        auto jst = sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        return jst;
     }
 
     sat::justification solver::mk_ne2bit_justification(unsigned idx, theory_var v1, theory_var v2, sat::literal c, sat::literal a) {
         void* mem = get_region().allocate(bv_justification::get_obj_size());
         sat::constraint_base::initialize(mem, this);
         auto* constraint = new (sat::constraint_base::ptr2mem(mem)) bv_justification(idx, v1, v2, c, a);
-        return sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        auto jst = sat::justification::mk_ext_justification(s().scope_lvl(), constraint->to_index());
+        return jst;
+    }
+
+    sat::ext_constraint_idx solver::mk_bv2int_justification(theory_var v1, theory_var v2, euf::enode* a, euf::enode* b, euf::enode* c) {
+        void* mem = get_region().allocate(bv_justification::get_obj_size());
+        sat::constraint_base::initialize(mem, this);
+        auto* constraint = new (sat::constraint_base::ptr2mem(mem)) bv_justification(v1, v2, a, b, c);
+        auto jst = constraint->to_index();
+        return jst;
     }
 
     bool solver::assign_bit(literal consequent, theory_var v1, theory_var v2, unsigned idx, literal antecedent, bool propagate_eqc) {

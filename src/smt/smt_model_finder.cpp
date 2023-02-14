@@ -50,6 +50,7 @@ namespace smt {
 
         class evaluator {
         public:
+            virtual ~evaluator() = default;
             virtual expr* eval(expr* n, bool model_completion) = 0;
         };
 
@@ -401,6 +402,7 @@ namespace smt {
 
             expr_ref_vector*          m_new_constraints{ nullptr };
             random_gen                m_rand;
+            func_decl_set             m_specrels;
 
 
             void reset_sort2k() {
@@ -462,7 +464,7 @@ namespace smt {
                 m.limit().inc();
             }
 
-            virtual ~auf_solver() {
+            ~auf_solver() override {
                 flush_nodes();
                 reset_eval_cache();
             }
@@ -470,6 +472,7 @@ namespace smt {
             ast_manager& get_manager() const { return m; }
 
             void reset() {
+                m_specrels.reset();
                 flush_nodes();
                 m_nodes.reset();
                 m_next_node_id = 0;
@@ -477,6 +480,11 @@ namespace smt {
                 m_A_f_is.reset();
                 m_root_nodes.reset();
                 reset_sort2k();
+            }
+
+            void set_specrels(context& c) {
+                m_specrels.reset();
+                c.get_specrels(m_specrels);
             }
 
             void set_model(proto_model* m) {
@@ -1049,8 +1057,12 @@ namespace smt {
              */
             void complete_partial_funcs(func_decl_set const& partial_funcs) {
                 for (func_decl* f : partial_funcs) {
+
                     // Complete the current interpretation
                     m_model->complete_partial_func(f, true);
+
+                    if (m_specrels.contains(f))
+                        continue;
 
                     unsigned arity = f->get_arity();
                     func_interp* fi = m_model->get_func_interp(f);
@@ -1145,7 +1157,7 @@ namespace smt {
             ast_manager& m;
         public:
             qinfo(ast_manager& m) :m(m) {}
-            virtual ~qinfo() {}
+            virtual ~qinfo() = default;
             virtual char const* get_kind() const = 0;
             virtual bool is_equal(qinfo const* qi) const = 0;
             virtual void display(std::ostream& out) const { out << "[" << get_kind() << "]"; }
@@ -1168,7 +1180,6 @@ namespace smt {
             unsigned    m_var_j;
         public:
             f_var(ast_manager& m, func_decl* f, unsigned i, unsigned j) : qinfo(m), m_f(f), m_arg_i(i), m_var_j(j) {}
-            ~f_var() override {}
 
             char const* get_kind() const override {
                 return "f_var";
@@ -1249,7 +1260,6 @@ namespace smt {
                 f_var(m, f, i, j),
                 m_offset(offset, m) {
             }
-            ~f_var_plus_offset() override {}
 
             char const* get_kind() const override {
                 return "f_var_plus_offset";
@@ -1415,7 +1425,6 @@ namespace smt {
 
         public:
             select_var(ast_manager& m, app* s, unsigned i, unsigned j) :qinfo(m), m_array(m), m_select(s), m_arg_i(i), m_var_j(j) {}
-            ~select_var() override {}
 
             char const* get_kind() const override {
                 return "select_var";
@@ -1484,8 +1493,6 @@ namespace smt {
                 if (m_var_i > m_var_j)
                     std::swap(m_var_i, m_var_j);
             }
-
-            ~var_pair() override {}
 
             bool is_equal(qinfo const* qi) const override {
                 if (qi->get_kind() != get_kind())
@@ -1565,7 +1572,6 @@ namespace smt {
             var_expr_pair(ast_manager& m, unsigned i, expr* t) :
                 qinfo(m),
                 m_var_i(i), m_t(t, m) {}
-            ~var_expr_pair() override {}
 
             bool is_equal(qinfo const* qi) const override {
                 if (qi->get_kind() != get_kind())
@@ -2399,9 +2405,11 @@ namespace smt {
         }
     }
 
+
     void model_finder::process_auf(ptr_vector<quantifier> const& qs, proto_model* mdl) {
         m_auf_solver->reset();
         m_auf_solver->set_model(mdl);
+        m_auf_solver->set_specrels(*m_context);
 
         for (quantifier* q : qs) {
             quantifier_info* qi = get_quantifier_info(q);

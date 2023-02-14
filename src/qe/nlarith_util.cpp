@@ -989,6 +989,7 @@ namespace nlarith {
             imp& m_imp;
         public:
             isubst(imp& i) : m_imp(i) {}
+            virtual ~isubst() = default;
             virtual void mk_lt(poly const& p, app_ref& r) = 0;
             virtual void mk_eq(poly const& p, app_ref& r) = 0;
             virtual void mk_le(poly const& p, app_ref& r) { 
@@ -1615,7 +1616,6 @@ namespace nlarith {
         public:
             simple_branch(ast_manager& m, app* cnstr):
               m_cnstr(cnstr, m), m_atoms(m) {}
-            ~simple_branch() override {}
             app* get_constraint() override { return m_cnstr.get(); }
             void get_updates(ptr_vector<app>& atoms, svector<util::atom_update>& updates) override {
                 for (unsigned i = 0; i < m_atoms.size(); ++i) {
@@ -1635,7 +1635,6 @@ namespace nlarith {
         public:
             ins_rem_branch(ast_manager& m, app* a, app* r, app* cnstr):
               simple_branch(m, cnstr) { insert(a); remove(r); }             
-            ~ins_rem_branch() override {}
         };
 
         /**

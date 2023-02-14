@@ -32,14 +32,15 @@ Notes:
 #include "tactic/aig/aig_tactic.h"
 #include "tactic/smtlogics/smt_tactic.h"
 #include "sat/tactic/sat_tactic.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/simplifiers/bound_manager.h"
 #include "tactic/arith/probe_arith.h"
 
 struct quasi_pb_probe : public probe {
     result operator()(goal const & g) override {
         bool found_non_01 = false;
         bound_manager bm(g.m());
-        bm(g);
+        for (unsigned i = 0; i < g.size(); ++i)
+            bm(g.form(i), g.dep(i), g.pr(i));
         rational l, u; bool st;
         for (expr * t : bm) {
             if (bm.has_lower(t, l, st) && bm.has_upper(t, u, st) && (l.is_zero() || l.is_one()) && (u.is_zero() || u.is_one()))
@@ -190,22 +191,14 @@ tactic * mk_preamble_tactic(ast_manager& m) {
     ctx_simp_p.set_uint("max_depth", 30);
     ctx_simp_p.set_uint("max_steps", 5000000);
 
-    params_ref lhs_p;
-    lhs_p.set_bool("arith_lhs", true);
-
-    tactic * preamble_st = and_then(mk_simplify_tactic(m),
-                                    mk_propagate_values_tactic(m),
-                                    using_params(mk_ctx_simplify_tactic(m), ctx_simp_p),
-                                    using_params(mk_simplify_tactic(m), pull_ite_p)
-                                    );
-
-    preamble_st = and_then(preamble_st,
-                           mk_solve_eqs_tactic(m),
-                           mk_elim_uncnstr_tactic(m),
-                           using_params(mk_simplify_tactic(m), lhs_p) 
-                           );
-
-    return preamble_st;
+    return
+        and_then(
+            mk_simplify_tactic(m),
+            mk_propagate_values_tactic(m),
+            using_params(mk_ctx_simplify_tactic(m), ctx_simp_p),
+            using_params(mk_simplify_tactic(m), pull_ite_p),
+            mk_solve_eqs_tactic(m),
+            mk_elim_uncnstr_tactic(m));
 }
 
 tactic * mk_qflia_tactic(ast_manager & m, params_ref const & p) {
@@ -215,23 +208,25 @@ tactic * mk_qflia_tactic(ast_manager & m, params_ref const & p) {
     main_p.set_bool("blast_distinct", true);
     main_p.set_uint("blast_distinct_threshold", 128);
     // main_p.set_bool("push_ite_arith", true);
-    
-
-
+   
     params_ref quasi_pb_p;
     quasi_pb_p.set_uint("lia2pb_max_bits", 64);
-    
-    tactic * preamble_st = mk_preamble_tactic(m);
 
-    tactic * st = using_params(and_then(preamble_st,
-                                        or_else(mk_ilp_model_finder_tactic(m),
-                                                mk_pb_tactic(m),
-                                                and_then(fail_if_not(mk_is_quasi_pb_probe()), 
-                                                         using_params(mk_lia2sat_tactic(m), quasi_pb_p),
-                                                         mk_fail_if_undecided_tactic()),
-                                                mk_bounded_tactic(m),
-                                                mk_smt_tactic(m))),
-                               main_p);
+    params_ref lhs_p;
+    lhs_p.set_bool("arith_lhs", true);
+
+    tactic* st = using_params(
+        and_then(
+            mk_preamble_tactic(m),
+            using_params(mk_simplify_tactic(m), lhs_p),
+            or_else(mk_ilp_model_finder_tactic(m),
+                mk_pb_tactic(m),
+                and_then(fail_if_not(mk_is_quasi_pb_probe()),
+                    using_params(mk_lia2sat_tactic(m), quasi_pb_p),
+                    mk_fail_if_undecided_tactic()),
+                mk_bounded_tactic(m),
+                mk_smt_tactic(m))),
+        main_p);
 
     
     st->updt_params(p);

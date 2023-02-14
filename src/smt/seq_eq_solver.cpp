@@ -375,6 +375,15 @@ bool theory_seq::split_lengths(dependency* dep,
     SASSERT(X != Y);
 
     // |b| < |X| <= |b| + |Y| => x = bY1, Y = Y1Y2
+    // at this point |b| = lenB - |Y| which is less than |X|
+    // given how bs is constructed:
+    // bs is constructed as a vector of strings with length >= |X|
+    // but when the last element it removed the length is < |X|
+    // We also have |X| <= |b| + |Y|, also by how bs is constructed.
+    // Therefore the antecedent is true in the current model.
+    // It could be the antecendet is not justified, so we create
+    // literals to justify the antecedent and ensure they are relevant.
+    // If the literals are relevant and assigned they should be true.
     expr_ref lenXE = mk_len(X);
     expr_ref lenYE = mk_len(Y);
     expr_ref lenb = mk_len(b);
@@ -383,7 +392,7 @@ bool theory_seq::split_lengths(dependency* dep,
     literal_vector lits;
     lits.push_back(lit1);
     lits.push_back(lit2);
-    
+
     if (ctx.get_assignment(lit1) != l_true ||
         ctx.get_assignment(lit2) != l_true) {
         ctx.mark_as_relevant(lit1);
@@ -684,11 +693,12 @@ bool theory_seq::branch_quat_variable(depeq const& e) {
             cond = true;
     }
     // xs and ys cannot align
-    else if (!can_align_from_lhs(xs, ys) && !can_align_from_rhs(xs, ys))
+    else if (!can_align_from_lhs(xs, ys) && !can_align_from_rhs(xs, ys) && !can_align_from_lhs(ys, xs) && !can_align_from_rhs(ys, xs))
         cond = true;
 
     if (!cond)
         return false;
+
     
     literal_vector lits;
     if (xs == ys) {
@@ -724,7 +734,7 @@ bool theory_seq::branch_quat_variable(depeq const& e) {
         }
     }
     else {
-        TRACE("seq", tout << mk_pp(x1, m) << " > " << mk_pp(y1, m) << "\n";);
+        TRACE("seq", tout << mk_pp(x1, m) << " >\n" << mk_pp(y1, m) << "\n";);
         if (ctx.get_assignment(lit3) == l_undef) {
             ctx.mark_as_relevant(lit3);
             return true;
@@ -1119,9 +1129,9 @@ struct remove_obj_pair_map : public trail {
     remove_obj_pair_map(ast_manager& m, obj_pair_hashtable<expr, expr> & map, expr* a, expr* b):
         m(m), m_map(map), a(a), b(b) {}
     void undo() override {
+        m_map.erase(std::make_pair(a, b));
         m.dec_ref(a);
         m.dec_ref(b);
-        m_map.erase(std::make_pair(a, b));
     }
 };
 
@@ -1144,7 +1154,7 @@ bool theory_seq::solve_nth_eq(expr_ref_vector const& ls, expr_ref_vector const& 
         m.inc_ref(rhs);
         m.inc_ref(ls[0]);
         m_nth_eq2_cache.insert(std::make_pair(rhs, ls[0]));
-        ctx.push_trail(remove_obj_pair_map(m, m_nth_eq2_cache, rhs, ls[0]));
+        get_trail_stack().push(remove_obj_pair_map(m, m_nth_eq2_cache, rhs, ls[0]));
         ls1.push_back(s);        
         if (!idx_is_zero) rs1.push_back(m_sk.mk_pre(s, idx)); 
         rs1.push_back(m_util.str.mk_unit(rhs)); 

@@ -28,7 +28,7 @@ Revision History:
 #include "ast/expr_abstract.h"
 #include "model/model2expr.h"
 #include "model/model_smt2_pp.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/model_converter.h"
 
 #include "smt/smt_solver.h"
 namespace spacer {
@@ -247,7 +247,7 @@ bool is_zk_const (const app *a, int &n) {
 }
 bool sk_lt_proc::operator()(const app *a1, const app *a2) {
     if (a1 == a2) return false;
-    int n1, n2;
+    int n1 = 0, n2 = 0;
     bool z1, z2;
     z1 = is_zk_const(a1, n1);
     z2 = is_zk_const(a2, n2);

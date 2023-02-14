@@ -9,10 +9,12 @@ z3_add_component(rewriter
     bv_elim.cpp
     bv_rewriter.cpp
     cached_var_subst.cpp
+    char_rewriter.cpp
     datatype_rewriter.cpp
     der.cpp
     distribute_forall.cpp
     dl_rewriter.cpp
+    dom_simplifier.cpp
     elim_bounds.cpp
     enum2bv_rewriter.cpp
     expr_replacer.cpp
@@ -24,6 +26,7 @@ z3_add_component(rewriter
     hoist_rewriter.cpp
     inj_axiom.cpp
     label_rewriter.cpp
+    macro_replacer.cpp
     maximize_ac_sharing.cpp
     mk_simplified_app.cpp
     pb_rewriter.cpp
@@ -44,5 +47,6 @@ z3_add_component(rewriter
     ast
     params
     automata
+    interval
     polynomial
 )

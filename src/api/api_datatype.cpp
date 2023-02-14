@@ -102,6 +102,13 @@ extern "C" {
         sort* e;
 
         ptr_vector<constructor_decl> constrs;
+        symbol sname = to_symbol(name);
+
+        if (mk_c(c)->get_dt_plugin()->is_declared(sname)) {
+            SET_ERROR_CODE(Z3_INVALID_ARG, "enumeration sort name is already declared");
+            RETURN_Z3(nullptr);
+        }
+
         for (unsigned i = 0; i < n; ++i) {
             symbol e_name(to_symbol(enum_names[i]));
             std::string recognizer_s("is_");
@@ -112,8 +119,9 @@ extern "C" {
         }
 
 
+
         {
-            datatype_decl * dt = mk_datatype_decl(dt_util, to_symbol(name), 0, nullptr, n, constrs.data());
+            datatype_decl * dt = mk_datatype_decl(dt_util, sname, 0, nullptr, n, constrs.data());
             bool is_ok = mk_c(c)->get_dt_plugin()->mk_datatypes(1, &dt, 0, nullptr, sorts);
             del_datatype_decl(dt);
 
@@ -364,6 +372,20 @@ extern "C" {
         dealloc(reinterpret_cast<constructor_list*>(clist));
         Z3_CATCH;
     }
+
+    Z3_sort Z3_API Z3_mk_datatype_sort(Z3_context c, Z3_symbol name) {
+        Z3_TRY;
+        LOG_Z3_mk_datatype_sort(c, name);
+        RESET_ERROR_CODE();
+        ast_manager& m = mk_c(c)->m();
+        datatype_util adt_util(m);
+        parameter p(to_symbol(name));
+        sort * s = m.mk_sort(adt_util.get_family_id(), DATATYPE_SORT, 1, &p);
+        mk_c(c)->save_ast_trail(s);
+        RETURN_Z3(of_sort(s));
+        Z3_CATCH_RETURN(nullptr);
+    }
+
 
     void Z3_API Z3_mk_datatypes(Z3_context c,
                                 unsigned num_sorts,

@@ -294,14 +294,16 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "factor"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->m_rw.cfg().updt_params(p);
+        m_params.append(p);
+        m_imp->m_rw.cfg().updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         r.insert("split_factors", CPK_BOOL,
-                 "(default: true) apply simplifications such as (= (* p1 p2) 0) --> (or (= p1 0) (= p2 0)).");
+                 "apply simplifications such as (= (* p1 p2) 0) --> (or (= p1 0) (= p2 0)).", "true");
         polynomial::factor_params::get_param_descrs(r);
     }
 

@@ -22,7 +22,7 @@ Revision History:
 #include "smt/theory_arith.h"
 #include "smt/smt_farkas_util.h"
 #include "ast/rewriter/th_rewriter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 namespace smt {
 
@@ -2169,9 +2169,8 @@ namespace smt {
     */
     template<typename Ext>
     bool theory_arith<Ext>::is_shared(theory_var v) const {
-        if (!m_found_underspecified_op) {
+        if (m_underspecified_ops.empty())
             return false;
-        }
         enode * n      = get_enode(v);
         enode * r      = n->get_root();
         enode_vector::const_iterator it  = r->begin_parents();
@@ -2223,12 +2222,12 @@ namespace smt {
                 continue;
             }
             TRACE("func_interp_bug", tout << "adding to assume_eq queue #" << n->get_owner_id() << " #" << n2->get_owner_id() << "\n";);
-            m_assume_eq_candidates.push_back(std::make_pair(other, v));
+            m_assume_eq_candidates.push_back({ other , v }); 
             result = true;
         }
 
         if (result)
-            ctx.push_trail(restore_size_trail<std::pair<theory_var, theory_var>, false>(m_assume_eq_candidates, old_sz));
+            ctx.push_trail(restore_vector(m_assume_eq_candidates, old_sz));
         return delayed_assume_eqs();
     }
 
@@ -2239,17 +2238,17 @@ namespace smt {
 
         ctx.push_trail(value_trail<unsigned>(m_assume_eq_head));
         while (m_assume_eq_head < m_assume_eq_candidates.size()) {
-            std::pair<theory_var, theory_var> const & p = m_assume_eq_candidates[m_assume_eq_head];
-            theory_var v1 = p.first;
-            theory_var v2 = p.second;
+            auto const& [v1, v2] = m_assume_eq_candidates[m_assume_eq_head];
+            enode* n1 = get_enode(v1);
+            enode* n2 = get_enode(v2);
             m_assume_eq_head++;
             CTRACE("func_interp_bug", 
                    get_value(v1) == get_value(v2) && 
-                   get_enode(v1)->get_root() != get_enode(v2)->get_root(),
-                   tout << "assuming eq: #" << get_enode(v1)->get_owner_id() << " = #" << get_enode(v2)->get_owner_id() << "\n";);
+                   n1->get_root() != n2->get_root(),
+                   tout << "assuming eq: #" << n1->get_owner_id() << " = #" << n2->get_owner_id() << "\n";);
             if (get_value(v1) == get_value(v2) && 
-                get_enode(v1)->get_root() != get_enode(v2)->get_root() &&
-                assume_eq(get_enode(v1), get_enode(v2))) {
+                n1->get_root() != n2->get_root() &&
+                assume_eq(n1, n2)) {
                 ++m_stats.m_assume_eqs;
                 return true;
             }

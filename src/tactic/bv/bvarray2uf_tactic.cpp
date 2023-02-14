@@ -20,7 +20,7 @@ Notes:
 #include "tactic/tactical.h"
 #include "ast/bv_decl_plugin.h"
 #include "ast/rewriter/expr_replacer.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/ast_smt2_pp.h"
 
 #include "tactic/bv/bvarray2uf_tactic.h"
@@ -113,9 +113,11 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "bvarray2uf"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {

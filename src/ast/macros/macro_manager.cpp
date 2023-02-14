@@ -126,7 +126,7 @@ bool macro_manager::insert(func_decl * f, quantifier * q, proof * pr, expr_depen
     }
 
     app * head;
-    expr * definition;
+    expr_ref definition(m);
     bool revert = false;
     get_head_def(q, f, head, definition, revert);
 
@@ -175,12 +175,6 @@ namespace macro_manager_ns {
 /**
    \brief Mark all func_decls used in exprs as forbidden.
 */
-void macro_manager::mark_forbidden(unsigned n, expr * const * exprs) {
-    expr_mark visited;
-    macro_manager_ns::proc p(m_forbidden_set, m_forbidden);
-    for (unsigned i = 0; i < n; i++)
-        for_each_expr(p, visited, exprs[i]);
-}
 
 void macro_manager::mark_forbidden(unsigned n, justified_expr const * exprs) {
     expr_mark visited;
@@ -190,21 +184,23 @@ void macro_manager::mark_forbidden(unsigned n, justified_expr const * exprs) {
 }
 
 
-void macro_manager::get_head_def(quantifier * q, func_decl * d, app * & head, expr * & def, bool& revert) const {
-    app * body = to_app(q->get_expr());
+void macro_manager::get_head_def(quantifier * q, func_decl * d, app * & head, expr_ref & def, bool& revert) const {
+    expr * body = q->get_expr();
     expr * lhs = nullptr, *rhs = nullptr;
+    bool is_not = m.is_not(body, body);
     VERIFY(m.is_eq(body, lhs, rhs));
     SASSERT(is_app_of(lhs, d) || is_app_of(rhs, d));
     SASSERT(!is_app_of(lhs, d) || !is_app_of(rhs, d));
+    SASSERT(!is_not || m.is_bool(lhs));     
     if (is_app_of(lhs, d)) {
         revert = false;
         head = to_app(lhs);
-        def  = rhs;
+        def  = is_not ? m.mk_not(rhs) : rhs;
     }
     else {
         revert = true;
         head = to_app(rhs);
-        def  = lhs;
+        def  = is_not ? m.mk_not(lhs) : lhs;
     }
 }
 
@@ -215,7 +211,7 @@ void macro_manager::display(std::ostream & out) {
         quantifier * q = nullptr;
         m_decl2macro.find(f, q);
         app * head;
-        expr * def;
+        expr_ref def(m);
         bool r;
         get_head_def(q, f, head, def, r);
         SASSERT(q);
@@ -227,7 +223,7 @@ func_decl * macro_manager::get_macro_interpretation(unsigned i, expr_ref & inter
     func_decl * f  = m_decls.get(i);
     quantifier * q = m_macros.get(i);
     app * head;
-    expr * def;
+    expr_ref def(m);
     bool r;
     get_head_def(q, f, head, def, r);
     TRACE("macro_bug",
@@ -239,12 +235,14 @@ func_decl * macro_manager::get_macro_interpretation(unsigned i, expr_ref & inter
 struct macro_manager::macro_expander_cfg : public default_rewriter_cfg {
     ast_manager& m; 
     macro_manager& mm;
+    array_util a;
     expr_dependency_ref m_used_macro_dependencies; 
     expr_ref_vector m_trail;
 
     macro_expander_cfg(ast_manager& m, macro_manager& mm):
         m(m),
         mm(mm),
+        a(m),
         m_used_macro_dependencies(m),
         m_trail(m)
     {}
@@ -294,11 +292,11 @@ struct macro_manager::macro_expander_cfg : public default_rewriter_cfg {
             return false;
         app * n = to_app(_n);
         quantifier * q = nullptr;
-        func_decl * d  = n->get_decl();
+        func_decl * d  = n->get_decl(), *d2 = nullptr;
         TRACE("macro_manager", tout << "trying to expand:\n" << mk_pp(n, m) << "\nd:\n" << d->get_name() << "\n";);
         if (mm.m_decl2macro.find(d, q)) {            
             app * head = nullptr;
-            expr * def = nullptr;
+            expr_ref def(m);
             bool revert = false;
             mm.get_head_def(q, d, head, def, revert);
             unsigned num = n->get_num_args();
@@ -320,6 +318,14 @@ struct macro_manager::macro_expander_cfg : public default_rewriter_cfg {
             r = rr;
             if (m.proofs_enabled()) {
                 expr_ref instance = s(q->get_expr(), num, subst_args.data());
+                expr* eq, * lhs, * rhs;
+                if (m.is_not(instance, eq) && m.is_eq(eq, lhs, rhs)) {
+                    if (revert)
+                        instance = m.mk_eq(m.mk_not(lhs), rhs);
+                    else
+                        instance = m.mk_eq(lhs, m.mk_not(rhs));
+                }
+                SASSERT(m.is_eq(instance));
                 proof * qi_pr = m.mk_quant_inst(m.mk_or(m.mk_not(q), instance), num, subst_args.data());
                 proof * q_pr  = mm.m_decl2macro_pr.find(d);
                 proof * prs[2] = { qi_pr, q_pr };
@@ -332,6 +338,12 @@ struct macro_manager::macro_expander_cfg : public default_rewriter_cfg {
             expr_dependency * ed = mm.m_decl2macro_dep.find(d); 
             m_used_macro_dependencies = m.mk_join(m_used_macro_dependencies, ed); 
             return true;
+        }
+        else if (a.is_as_array(d, d2) && mm.m_decl2macro.find(d2, q)) {
+            mm.unsafe_macros().insert(d2);
+        }
+        else if (a.is_map(d, d2) && mm.m_decl2macro.find(d2, q)) {
+            mm.unsafe_macros().insert(d2);
         }
         return false;
     }

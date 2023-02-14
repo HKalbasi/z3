@@ -101,6 +101,7 @@ add_executable(test-z3
   sat_local_search.cpp
   sat_lookahead.cpp
   sat_user_scope.cpp
+  scoped_timer.cpp
   simple_parser.cpp
   simplex.cpp
   simplifier.cpp
@@ -119,6 +120,7 @@ add_executable(test-z3
   theory_pb.cpp
   timeout.cpp
   total_order.cpp
+  totalizer.cpp
   trigo.cpp
   udoc_relation.cpp
   uint_set.cpp

@@ -38,7 +38,7 @@ namespace smt {
     {
         params_ref p;
         p.set_bool("arith_lhs", true);
-        m_th_rw.updt_params(p);        
+        m_th_rw.updt_params(p);
     }
 
     theory_fpa::~theory_fpa()
@@ -215,11 +215,12 @@ namespace smt {
     }
 
     void theory_fpa::assert_cnstr(expr * e) {
+        expr_ref _e(e, m);
         if (m.is_true(e)) return;
         TRACE("t_fpa_detail", tout << "asserting " << mk_ismt2_pp(e, m) << "\n";);
         if (m.has_trace_stream()) log_axiom_instantiation(e);
         ctx.internalize(e, false);
-        if (m.has_trace_stream()) m.trace_stream() << "[end-of-instance]\n";
+        if (m.has_trace_stream()) m.trace_stream() << "[end-of-instance]\n";        
         literal lit(ctx.get_literal(e));
         ctx.mark_as_relevant(lit);
         ctx.mk_th_axiom(get_id(), 1, &lit);
@@ -284,6 +285,9 @@ namespace smt {
             }
             default: /* ignore */;
             }
+
+            if (!ctx.relevancy())
+                relevant_eh(term);
         }
 
         return true;
@@ -456,6 +460,7 @@ namespace smt {
                     c = m.mk_eq(wrapped, cc_args);
                     assert_cnstr(c);
                     assert_cnstr(mk_side_conditions());
+                    assert_cnstr(m.mk_eq(n, bv_val_e));
                 }
                 else {
                     expr_ref wu(m);
@@ -622,7 +627,7 @@ namespace smt {
         bv2fp.convert_min_max_specials(&mdl, &new_model, seen);
         bv2fp.convert_uf2bvuf(&mdl, &new_model, seen);
 
-        for (func_decl* f : seen) 
+        for (func_decl* f : seen)
             mdl.unregister_decl(f);
 
         for (unsigned i = 0; i < new_model.get_num_constants(); i++) {
@@ -645,8 +650,7 @@ namespace smt {
             theory_var v = n->get_th_var(get_family_id());
             if (v != -1) {
                 if (first) out << "fpa theory variables:" << std::endl;
-                out << v << " -> " <<
-                    mk_ismt2_pp(n->get_expr(), m) << std::endl;
+                out << v << " -> " << enode_pp(n, ctx) << "\n";
                 first = false;
             }
         }
@@ -656,22 +660,19 @@ namespace smt {
         out << "bv theory variables:" << std::endl;
         for (enode * n : ctx.enodes()) {
             theory_var v = n->get_th_var(m_bv_util.get_family_id());
-            if (v != -1) out << v << " -> " <<
-                mk_ismt2_pp(n->get_expr(), m) << std::endl;
+            if (v != -1) out << v << " -> " << enode_pp(n, ctx) << "\n";
         }
 
         out << "arith theory variables:" << std::endl;
         for (enode* n : ctx.enodes()) {
             theory_var v = n->get_th_var(m_arith_util.get_family_id());
-            if (v != -1) out << v << " -> " <<
-                mk_ismt2_pp(n->get_expr(), m) << std::endl;
+            if (v != -1) out << v << " -> " << enode_pp(n, ctx) << "\n";
         }
 
         out << "equivalence classes:\n";
         for (enode * n : ctx.enodes()) {
-            expr * e = n->get_expr();
             expr * r = n->get_root()->get_expr();
-            out << r->get_id() << " --> " << mk_ismt2_pp(e, m) << std::endl;
+            out << r->get_id() << " --> " << enode_pp(n, ctx) << "\n";
         }
     }
 };

@@ -2470,6 +2470,10 @@ namespace smt2 {
             next();
         }
 
+        /**
+         * (declare-fun f (sorts) sort)
+         * (declare-fun (alphas) (sorts) sort)
+         */
         void parse_declare_fun() {
             SASSERT(curr_is_identifier());
             SASSERT(curr_id() == m_declare_fun);
@@ -3101,6 +3105,10 @@ namespace smt2 {
 
         }
 
+        void reset_input(std::istream & is, bool interactive) {
+            m_scanner.reset_input(is, interactive);
+        }
+
         sexpr_ref parse_sexpr_ref() {
             m_num_bindings    = 0;
             m_num_open_paren = 0;
@@ -3117,6 +3125,23 @@ namespace smt2 {
             }
             return sexpr_ref(nullptr, sm());
         }
+
+        sort_ref parse_sort_ref(char const* context) {
+            m_num_bindings    = 0;
+            m_num_open_paren = 0;
+
+            try {
+                scan_core();
+                parse_sort(context);
+                if (!sort_stack().empty()) 
+                    return sort_ref(sort_stack().back(), m());
+            }
+            catch (z3_exception & ex) {
+                error(ex.msg());
+            }
+            return sort_ref(nullptr, m());
+        }
+
 
         bool operator()() {
             m_num_bindings    = 0;
@@ -3183,11 +3208,26 @@ namespace smt2 {
             }
         }
     };
+
+    void free_parser(parser * p) { dealloc(p); }
 };
 
 bool parse_smt2_commands(cmd_context & ctx, std::istream & is, bool interactive, params_ref const & ps, char const * filename) {
     smt2::parser p(ctx, is, interactive, ps, filename);
     return p();
+}
+
+bool parse_smt2_commands_with_parser(class smt2::parser *& p, cmd_context & ctx, std::istream & is, bool interactive, params_ref const & ps, char const * filename) {
+    if (p)
+        p->reset_input(is, interactive);
+    else
+        p = alloc(smt2::parser, ctx, is, interactive, ps, filename);
+    return (*p)();
+}
+
+sort_ref parse_smt2_sort(cmd_context & ctx, std::istream & is, bool interactive, params_ref const & ps, char const * filename) {
+    smt2::parser p(ctx, is, interactive, ps, filename);
+    return p.parse_sort_ref(filename);
 }
 
 sexpr_ref parse_sexpr(cmd_context& ctx, std::istream& is, params_ref const& ps, char const* filename) {

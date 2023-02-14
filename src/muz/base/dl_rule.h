@@ -23,12 +23,12 @@ Revision History:
 #include "muz/base/dl_costs.h"
 #include "muz/base/dl_util.h"
 #include "ast/used_vars.h"
-#include "tactic/proof_converter.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/proof_converter.h"
+#include "ast/converters/model_converter.h"
 #include "ast/rewriter/ast_counter.h"
 #include "ast/rewriter/rewriter.h"
 #include "muz/base/hnf.h"
-#include "qe/qe_lite.h"
+#include "qe/lite/qe_lite_tactic.h"
 #include "ast/rewriter/var_subst.h"
 #include "ast/datatype_decl_plugin.h"
 #include "ast/rewriter/label_rewriter.h"
@@ -287,13 +287,12 @@ namespace datalog {
     class rule : public accounted_object {
         friend class rule_manager;
 
-        app*     m_head{ nullptr };
-        proof*   m_proof{ nullptr };
-        unsigned m_tail_size:20;
-        // unsigned m_reserve:12;
-        unsigned m_ref_cnt{ 0 };
-        unsigned m_positive_cnt{ 0 };
-        unsigned m_uninterp_cnt{ 0 };
+        app*     m_head = nullptr;
+        proof*   m_proof = nullptr;
+        unsigned m_tail_size = 0;
+        unsigned m_ref_cnt = 0;
+        unsigned m_positive_cnt = 0;
+        unsigned m_uninterp_cnt = 0;
         symbol   m_name;
         /**
            The following field is an array of tagged pointers. 
@@ -366,7 +365,7 @@ namespace datalog {
 
         void get_vars(ast_manager& m, ptr_vector<sort>& sorts) const;
 
-        void display(context & ctx, std::ostream & out) const;
+        void display(context & ctx, std::ostream & out, bool compact = false) const;
 
         /**
            \brief Return the name(s) associated with this rule. Plural for preprocessed (e.g. obtained by inlining) rules.

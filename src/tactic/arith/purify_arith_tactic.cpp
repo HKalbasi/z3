@@ -27,7 +27,7 @@ Revision History:
 #include "tactic/core/nnf_tactic.h"
 #include "tactic/core/simplify_tactic.h"
 #include "ast/rewriter/th_rewriter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/ast_smt2_pp.h"
 #include "ast/ast_pp.h"
 #include "ast/rewriter/expr_replacer.h"
@@ -854,7 +854,10 @@ struct purify_arith_proc {
                 for (auto const& p : mods) {
                     body = m().mk_ite(m().mk_and(m().mk_eq(v0, p.x), m().mk_eq(v1, p.y)), p.d, body);
                 }
+                
                 fmc->add(u().mk_mod0(), body);
+                body = m().mk_ite(u().mk_ge(v1, u().mk_int(0)), body, u().mk_uminus(body));
+                fmc->add(u().mk_rem0(), body);
             }
             if (!idivs.empty()) {
                 expr_ref body(u().mk_int(0), m());
@@ -899,21 +902,20 @@ public:
     tactic * translate(ast_manager & m) override {
         return alloc(purify_arith_tactic, m, m_params);
     }
-        
-    ~purify_arith_tactic() override {
-    }
+
+    char const* name() const override { return "purify_arith"; }
 
     void updt_params(params_ref const & p) override {
-        m_params = p;
+        m_params.append(p);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         r.insert("complete", CPK_BOOL, 
-                 "(default: true) add constraints to make sure that any interpretation of a underspecified arithmetic operators is a function. The result will include additional uninterpreted functions/constants: /0, div0, mod0, 0^0, neg-root");
+                 "add constraints to make sure that any interpretation of a underspecified arithmetic operators is a function. The result will include additional uninterpreted functions/constants: /0, div0, mod0, 0^0, neg-root", "true");
         r.insert("elim_root_objects", CPK_BOOL,
-                 "(default: true) eliminate root objects.");
+                 "eliminate root objects.", "true");
         r.insert("elim_inverses", CPK_BOOL,
-                 "(default: true) eliminate inverse trigonometric functions (asin, acos, atan).");
+                 "eliminate inverse trigonometric functions (asin, acos, atan).", "true");
         th_rewriter::get_param_descrs(r);
     }
     

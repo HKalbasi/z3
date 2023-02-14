@@ -32,7 +32,6 @@ class ctx_propagate_assertions : public ctx_simplify_tactic::simplifier {
     void assert_eq_core(expr * t, app * val);
 public:
     ctx_propagate_assertions(ast_manager& m);
-    ~ctx_propagate_assertions() override {}
     bool assert_expr(expr * t, bool sign) override;
     bool simplify(expr* t, expr_ref& result) override;
     void push();
@@ -605,15 +604,15 @@ ctx_simplify_tactic::~ctx_simplify_tactic() {
 }
 
 void ctx_simplify_tactic::updt_params(params_ref const & p) {
-    m_params = p;
-    m_imp->updt_params(p);
+    m_params.append(p);
+    m_imp->updt_params(m_params);
 }
 
 void ctx_simplify_tactic::get_param_descrs(param_descrs & r) {
     insert_max_memory(r);
     insert_max_steps(r);
-    r.insert("max_depth", CPK_UINT, "(default: 1024) maximum term depth.");
-    r.insert("propagate_eq", CPK_BOOL, "(default: false) enable equality propagation from bounds.");
+    r.insert("max_depth", CPK_UINT, "maximum term depth.", "1024");
+    r.insert("propagate_eq", CPK_BOOL, "enable equality propagation from bounds.", "false");
 }
 
 void ctx_simplify_tactic::operator()(goal_ref const & in,

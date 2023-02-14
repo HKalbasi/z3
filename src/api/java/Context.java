@@ -110,7 +110,7 @@ public class Context implements AutoCloseable {
     Symbol[] mkSymbols(String[] names)
     {
         if (names == null)
-            return null;
+            return new Symbol[0];
         Symbol[] result = new Symbol[names.length];
         for (int i = 0; i < names.length; ++i)
             result[i] = mkSymbol(names[i]);
@@ -120,7 +120,7 @@ public class Context implements AutoCloseable {
     private BoolSort m_boolSort = null;
     private IntSort m_intSort = null;
     private RealSort m_realSort = null;
-    private SeqSort<BitVecSort> m_stringSort = null;
+    private SeqSort<CharSort> m_stringSort = null;
 
     /**
      * Retrieves the Boolean sort of the context.
@@ -164,9 +164,18 @@ public class Context implements AutoCloseable {
     }
 
     /**
-     * Retrieves the Integer sort of the context.
+     * Creates character sort object.
      **/
-    public SeqSort<BitVecSort> getStringSort()
+
+    public CharSort mkCharSort()
+    {
+        return new CharSort(this);
+    }
+
+    /**
+     * Retrieves the String sort of the context.
+     **/
+    public SeqSort<CharSort> getStringSort()
     {
         if (m_stringSort == null) {
             m_stringSort = mkStringSort();
@@ -239,7 +248,7 @@ public class Context implements AutoCloseable {
     /**
      * Create a new string sort
      **/
-    public SeqSort<BitVecSort> mkStringSort()
+    public SeqSort<CharSort> mkStringSort()
     {
         return new SeqSort<>(this, Native.mkStringSort(nCtx()));
     }
@@ -499,11 +508,11 @@ public class Context implements AutoCloseable {
      */
     public <R extends Sort> void AddRecDef(FuncDecl<R> f, Expr<?>[] args, Expr<R> body)
     {
-	checkContextMatch(f);
-	checkContextMatch(args);
-	checkContextMatch(body);
-	long[] argsNative = AST.arrayToNative(args);
-	Native.addRecDef(nCtx(), f.getNativeObject(), args.length, argsNative, body.getNativeObject());
+        checkContextMatch(f);
+        checkContextMatch(args);
+        checkContextMatch(body);
+        long[] argsNative = AST.arrayToNative(args);
+        Native.addRecDef(nCtx(), f.getNativeObject(), args.length, argsNative, body.getNativeObject());
     }
 
     /**
@@ -1708,9 +1717,8 @@ public class Context implements AutoCloseable {
      * {@code [domain -> range]}, and {@code i} must have the sort
      * {@code domain}. The sort of the result is {@code range}.
      *
-     * @see #mkArraySort
-     * @see #mkStore
-
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkStore(Expr<ArraySort<D, R>> a, Expr<D> i, Expr<R> v)
      **/
     public <D extends Sort, R extends Sort> Expr<R> mkSelect(Expr<ArraySort<D, R>> a, Expr<D> i)
     {
@@ -1731,8 +1739,8 @@ public class Context implements AutoCloseable {
      * {@code [domains -> range]}, and {@code args} must have the sorts
      * {@code domains}. The sort of the result is {@code range}.
      *
-     * @see #mkArraySort
-     * @see #mkStore
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkStore(Expr<ArraySort<D, R>> a, Expr<D> i, Expr<R> v)
      **/
     public <R extends Sort> Expr<R> mkSelect(Expr<ArraySort<Sort, R>> a, Expr<?>[] args)
     {
@@ -1755,8 +1763,8 @@ public class Context implements AutoCloseable {
      * {@code select}) on all indices except for {@code i}, where it
      * maps to {@code v} (and the {@code select} of {@code a}
      * with respect to {@code i} may be a different value). 
-     * @see #mkArraySort
-     * @see #mkSelect
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkSelect(Expr<ArraySort<D, R>> a, Expr<D> i)
 
      **/
     public <D extends Sort, R extends Sort> ArrayExpr<D, R> mkStore(Expr<ArraySort<D, R>> a, Expr<D> i, Expr<R> v)
@@ -1780,8 +1788,8 @@ public class Context implements AutoCloseable {
      * {@code select}) on all indices except for {@code args}, where it
      * maps to {@code v} (and the {@code select} of {@code a}
      * with respect to {@code args} may be a different value). 
-     * @see #mkArraySort
-     * @see #mkSelect
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkSelect(Expr<ArraySort<D, R>> a, Expr<D> i)
 
      **/
     public <R extends Sort> ArrayExpr<Sort, R> mkStore(Expr<ArraySort<Sort, R>> a, Expr<?>[] args, Expr<R> v)
@@ -1798,8 +1806,8 @@ public class Context implements AutoCloseable {
      * Remarks:  The resulting term is an array, such
      * that a {@code select} on an arbitrary index produces the value
      * {@code v}. 
-     * @see #mkArraySort
-     * @see #mkSelect
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkSelect(Expr<ArraySort<D, R>> a, Expr<D> i)
      *
      **/
     public <D extends Sort, R extends Sort> ArrayExpr<D, R> mkConstArray(D domain, Expr<R> v)
@@ -1818,9 +1826,9 @@ public class Context implements AutoCloseable {
      * {@code f} must have type {@code  range_1 .. range_n -> range}.
      * {@code v} must have sort range. The sort of the result is
      * {@code [domain_i -> range]}. 
-     * @see #mkArraySort
-     * @see #mkSelect
-     * @see #mkStore
+     * @see #mkArraySort(Sort[], R)
+     * @see #mkSelect(Expr<ArraySort<D, R>> a, Expr<D> i)
+     * @see #mkStore(Expr<ArraySort<D, R>> a, Expr<D> i, Expr<R> v)
 
      **/
     @SafeVarargs
@@ -2006,25 +2014,49 @@ public class Context implements AutoCloseable {
     /**
      * Create a string constant.
      */
-    public SeqExpr<BitVecSort> mkString(String s)
+    public SeqExpr<CharSort> mkString(String s)
     {
-        return (SeqExpr<BitVecSort>) Expr.create(this, Native.mkString(nCtx(), s));
+        StringBuilder buf = new StringBuilder();
+        for (int i = 0; i < s.length(); ++i) {
+	    int code = s.codePointAt(i);
+	    if (code <= 32 || 127 < code) 
+	        buf.append(String.format("\\u{%x}", code));
+	    else
+	        buf.append(s.charAt(i));
+        }
+        return (SeqExpr<CharSort>) Expr.create(this, Native.mkString(nCtx(), buf.toString()));
     }
 
     /**
      * Convert an integer expression to a string.
      */
-    public SeqExpr<BitVecSort> intToString(Expr<IntSort> e)
+    public SeqExpr<CharSort> intToString(Expr<IntSort> e)
     {
-	return (SeqExpr<BitVecSort>) Expr.create(this, Native.mkIntToStr(nCtx(), e.getNativeObject()));
+        return (SeqExpr<CharSort>) Expr.create(this, Native.mkIntToStr(nCtx(), e.getNativeObject()));
     }
 
     /**
+     * Convert an unsigned bitvector expression to a string.
+     */
+    public SeqExpr<CharSort> ubvToString(Expr<BitVecSort> e)
+    {
+        return (SeqExpr<CharSort>) Expr.create(this, Native.mkUbvToStr(nCtx(), e.getNativeObject()));
+    }
+    
+    /**
+     * Convert an signed bitvector expression to a string.
+     */
+    public SeqExpr<CharSort> sbvToString(Expr<BitVecSort> e)
+    {
+        return (SeqExpr<CharSort>) Expr.create(this, Native.mkSbvToStr(nCtx(), e.getNativeObject()));
+    }
+    
+    /**
      * Convert an integer expression to a string.
      */
-    public IntExpr stringToInt(Expr<SeqSort<BitVecSort>> e)
+    public IntExpr stringToInt(Expr<SeqSort<CharSort>> e)
     {
-	return (IntExpr) Expr.create(this, Native.mkStrToInt(nCtx(), e.getNativeObject()));
+        return (IntExpr) Expr.create(this, Native.mkStrToInt(nCtx(), e.getNativeObject()));
     }
 
     /**
@@ -2041,7 +2073,7 @@ public class Context implements AutoCloseable {
     /**
      * Retrieve the length of a given sequence.
      */
-    public <R extends Sort> IntExpr mkLength(Expr<SeqSort<BitVecSort>> s)
+    public <R extends Sort> IntExpr mkLength(Expr<SeqSort<R>> s)
     {
         checkContextMatch(s);
         return (IntExpr) Expr.create(this, Native.mkSeqLength(nCtx(), s.getNativeObject()));
@@ -2050,7 +2082,7 @@ public class Context implements AutoCloseable {
     /**
      * Check for sequence prefix.
      */
-    public <R extends Sort> BoolExpr mkPrefixOf(Expr<SeqSort<BitVecSort>> s1, Expr<SeqSort<BitVecSort>> s2)
+    public <R extends Sort> BoolExpr mkPrefixOf(Expr<SeqSort<R>> s1, Expr<SeqSort<R>> s2)
     {
         checkContextMatch(s1, s2);
         return (BoolExpr) Expr.create(this, Native.mkSeqPrefix(nCtx(), s1.getNativeObject(), s2.getNativeObject()));
@@ -2059,7 +2091,7 @@ public class Context implements AutoCloseable {
     /**
      * Check for sequence suffix.
      */
-    public <R extends Sort> BoolExpr mkSuffixOf(Expr<SeqSort<BitVecSort>> s1, Expr<SeqSort<BitVecSort>> s2)
+    public <R extends Sort> BoolExpr mkSuffixOf(Expr<SeqSort<R>> s1, Expr<SeqSort<R>> s2)
     {
         checkContextMatch(s1, s2);
         return (BoolExpr)Expr.create(this, Native.mkSeqSuffix(nCtx(), s1.getNativeObject(), s2.getNativeObject()));
@@ -2068,16 +2100,36 @@ public class Context implements AutoCloseable {
     /**
      * Check for sequence containment of s2 in s1.
      */
-    public <R extends Sort> BoolExpr mkContains(Expr<SeqSort<BitVecSort>> s1, Expr<SeqSort<BitVecSort>> s2)
+    public <R extends Sort> BoolExpr mkContains(Expr<SeqSort<R>> s1, Expr<SeqSort<R>> s2)
     {
         checkContextMatch(s1, s2);
         return (BoolExpr) Expr.create(this, Native.mkSeqContains(nCtx(), s1.getNativeObject(), s2.getNativeObject()));
     }
 
     /**
+     * Check if the string s1 is lexicographically strictly less than s2.
+     */
+
+    public BoolExpr MkStringLt(Expr<SeqSort<CharSort>> s1, Expr<SeqSort<CharSort>> s2) 
+    {
+        checkContextMatch(s1, s2);
+        return new BoolExpr(this, Native.mkStrLt(nCtx(), s1.getNativeObject(), s2.getNativeObject()));
+    }
+
+    /**
+     * Check if the string s1 is lexicographically less or equal to s2.
+     */
+    public BoolExpr MkStringLe(Expr<SeqSort<CharSort>> s1, Expr<SeqSort<CharSort>> s2)
+    {
+        checkContextMatch(s1, s2);
+        return new BoolExpr(this, Native.mkStrLe(nCtx(), s1.getNativeObject(), s2.getNativeObject()));
+    }
+
+
+    /**
      * Retrieve sequence of length one at index.
      */
-    public <R extends Sort> SeqExpr<R> mkAt(Expr<SeqSort<BitVecSort>> s, Expr<IntSort> index)
+    public <R extends Sort> SeqExpr<R> mkAt(Expr<SeqSort<R>> s, Expr<IntSort> index)
     {
         checkContextMatch(s, index);
         return (SeqExpr<R>) Expr.create(this, Native.mkSeqAt(nCtx(), s.getNativeObject(), index.getNativeObject()));
@@ -2086,7 +2138,7 @@ public class Context implements AutoCloseable {
     /**
      *  Retrieve element at index.
      */
-    public <R extends Sort> Expr<R> MkNth(Expr<SeqSort<BitVecSort>> s, Expr<IntSort> index)
+    public <R extends Sort> Expr<R> mkNth(Expr<SeqSort<R>> s, Expr<IntSort> index)
     {
         checkContextMatch(s, index);
         return (Expr<R>) Expr.create(this, Native.mkSeqNth(nCtx(), s.getNativeObject(), index.getNativeObject()));
@@ -2096,7 +2148,7 @@ public class Context implements AutoCloseable {
     /**
      * Extract subsequence.
      */
-    public <R extends Sort> SeqExpr<R> mkExtract(Expr<SeqSort<BitVecSort>> s, Expr<IntSort> offset, Expr<IntSort> length)
+    public <R extends Sort> SeqExpr<R> mkExtract(Expr<SeqSort<R>> s, Expr<IntSort> offset, Expr<IntSort> length)
     {
         checkContextMatch(s, offset, length);
         return (SeqExpr<R>) Expr.create(this, Native.mkSeqExtract(nCtx(), s.getNativeObject(), offset.getNativeObject(), length.getNativeObject()));
@@ -2105,7 +2157,7 @@ public class Context implements AutoCloseable {
     /**
      * Extract index of sub-string starting at offset.
      */
-    public <R extends Sort> IntExpr mkIndexOf(Expr<SeqSort<BitVecSort>> s, Expr<SeqSort<BitVecSort>> substr, Expr<IntSort> offset)
+    public <R extends Sort> IntExpr mkIndexOf(Expr<SeqSort<R>> s, Expr<SeqSort<R>> substr, Expr<IntSort> offset)
     {
         checkContextMatch(s, substr, offset);
         return (IntExpr)Expr.create(this, Native.mkSeqIndex(nCtx(), s.getNativeObject(), substr.getNativeObject(), offset.getNativeObject()));
@@ -2114,7 +2166,7 @@ public class Context implements AutoCloseable {
     /**
      * Replace the first occurrence of src by dst in s.
      */
-    public <R extends Sort> SeqExpr<R> mkReplace(Expr<SeqSort<BitVecSort>> s, Expr<SeqSort<BitVecSort>> src, Expr<SeqSort<BitVecSort>> dst)
+    public <R extends Sort> SeqExpr<R> mkReplace(Expr<SeqSort<R>> s, Expr<SeqSort<R>> src, Expr<SeqSort<R>> dst)
     {
         checkContextMatch(s, src, dst);
         return (SeqExpr<R>) Expr.create(this, Native.mkSeqReplace(nCtx(), s.getNativeObject(), src.getNativeObject(), dst.getNativeObject()));
@@ -2123,7 +2175,7 @@ public class Context implements AutoCloseable {
     /**
      * Convert a regular expression that accepts sequence s.
      */
-    public <R extends Sort> ReExpr<R> mkToRe(Expr<SeqSort<BitVecSort>> s)
+    public <R extends Sort> ReExpr<R> mkToRe(Expr<SeqSort<R>> s)
     {
         checkContextMatch(s);
         return (ReExpr<R>) Expr.create(this, Native.mkSeqToRe(nCtx(), s.getNativeObject()));
@@ -2133,7 +2185,7 @@ public class Context implements AutoCloseable {
     /**
      * Check for regular expression membership.
      */
-    public <R extends Sort> BoolExpr mkInRe(Expr<SeqSort<BitVecSort>> s, Expr<ReSort<R>> re)
+    public <R extends Sort> BoolExpr mkInRe(Expr<SeqSort<R>> s, Expr<ReSort<R>> re)
     {
         checkContextMatch(s, re);
         return (BoolExpr) Expr.create(this, Native.mkSeqInRe(nCtx(), s.getNativeObject(), re.getNativeObject()));
@@ -2146,6 +2198,14 @@ public class Context implements AutoCloseable {
     {
         checkContextMatch(re);
         return (ReExpr<R>) Expr.create(this, Native.mkReStar(nCtx(), re.getNativeObject()));
+    }
+
+    /**
+     * Create power regular expression.
+     */
+    public <R extends Sort> ReExpr<R> mkPower(Expr<ReSort<R>> re, int n)
+    {
+        return (ReExpr<R>) Expr.create(this, Native.mkRePower(nCtx(), re.getNativeObject(), n));
     }
 
     /**
@@ -2223,30 +2283,95 @@ public class Context implements AutoCloseable {
     }
 
     /**
+     * Create a difference regular expression.
+     */
+    public <R extends Sort> ReExpr<R> mkDiff(Expr<ReSort<R>> a, Expr<ReSort<R>> b)
+    {
+        checkContextMatch(a, b);
+	return (ReExpr<R>) Expr.create(this, Native.mkReDiff(nCtx(), a.getNativeObject(), b.getNativeObject()));
+    }
+
+
+    /**
      * Create the empty regular expression.
+     * Coresponds to re.none
      */
     public <R extends Sort> ReExpr<R> mkEmptyRe(R s)
     {
-	return (ReExpr<R>) Expr.create(this, Native.mkReEmpty(nCtx(), s.getNativeObject()));
+        return (ReExpr<R>) Expr.create(this, Native.mkReEmpty(nCtx(), s.getNativeObject()));
     }
 
     /**
      * Create the full regular expression.
+     * Corresponds to re.all
      */
     public <R extends Sort> ReExpr<R> mkFullRe(R s)
     {
-	return (ReExpr<R>) Expr.create(this, Native.mkReFull(nCtx(), s.getNativeObject()));
+        return (ReExpr<R>) Expr.create(this, Native.mkReFull(nCtx(), s.getNativeObject()));
+    }
+
+    /**
+     * Create regular expression that accepts all characters
+     * Corresponds to re.allchar
+     */
+    public <R extends Sort> ReExpr<R> mkAllcharRe(R s)
+    {
+        return (ReExpr<R>) Expr.create(this, Native.mkReAllchar(nCtx(), s.getNativeObject()));
     }
 
     /**
      * Create a range expression.
      */
-    public <R extends Sort> ReExpr<R> mkRange(Expr<SeqSort<BitVecSort>> lo, Expr<SeqSort<BitVecSort>> hi)
+    public <R extends Sort> ReExpr<R> mkRange(Expr<SeqSort<CharSort>> lo, Expr<SeqSort<CharSort>> hi)
     {
         checkContextMatch(lo, hi);
         return (ReExpr<R>) Expr.create(this, Native.mkReRange(nCtx(), lo.getNativeObject(), hi.getNativeObject()));
     }
 
+    /**
+     * Create less than or equal to between two characters.
+     */
+    public BoolExpr mkCharLe(Expr<CharSort> ch1, Expr<CharSort> ch2) 
+    {
+        checkContextMatch(ch1, ch2);
+        return (BoolExpr) Expr.create(this, Native.mkCharLe(nCtx(), ch1.getNativeObject(), ch2.getNativeObject()));
+    }
+
+    /**
+     * Create an integer (code point) from character.
+     */
+    public IntExpr charToInt(Expr<CharSort> ch) 
+    {
+        checkContextMatch(ch);
+        return (IntExpr) Expr.create(this, Native.mkCharToInt(nCtx(), ch.getNativeObject()));
+    }
+
+    /**
+     * Create a bit-vector (code point) from character.
+     */
+    public BitVecExpr charToBv(Expr<CharSort> ch) 
+    {
+        checkContextMatch(ch);
+        return (BitVecExpr) Expr.create(this, Native.mkCharToBv(nCtx(), ch.getNativeObject()));
+    }
+
+    /**
+     * Create a character from a bit-vector (code point).
+     */
+    public Expr<CharSort> charFromBv(BitVecExpr bv) 
+    {
+        checkContextMatch(bv);
+        return (Expr<CharSort>) Expr.create(this, Native.mkCharFromBv(nCtx(), bv.getNativeObject()));
+    }
+
+    /**
+     * Create a check if the character is a digit.
+     */
+    public BoolExpr mkIsDigit(Expr<CharSort> ch) 
+    {
+        checkContextMatch(ch);
+        return (BoolExpr) Expr.create(this, Native.mkCharIsDigit(nCtx(), ch.getNativeObject()));
+    }
 
     /**
      * Create an at-most-k constraint.
@@ -2351,7 +2476,7 @@ public class Context implements AutoCloseable {
      *
      * @return A Term with value {@code num}/{@code den}
      *         and sort Real 
-     * @see #mkNumeral(String,Sort)
+     * @see #mkNumeral(String v, R ty)
      **/
     public RatNum mkReal(int num, int den)
     {
@@ -2487,7 +2612,7 @@ public class Context implements AutoCloseable {
      * 'names' of the bound variables, and {@code body} is the body
      * of the quantifier. Quantifiers are associated with weights indicating the
      * importance of using the quantifier during instantiation.
-     * Note that the bound variables are de-Bruijn indices created using {@link #mkBound}.
+     * Note that the bound variables are de-Bruijn indices created using {#mkBound}.
      * Z3 applies the convention that the last element in {@code names} and 
      * {@code sorts} refers to the variable with index 0, the second to last element 
      * of {@code names} and {@code sorts} refers to the variable 
@@ -2582,7 +2707,7 @@ public class Context implements AutoCloseable {
      * with the sorts of the bound variables, {@code names} is an array with the
      * 'names' of the bound variables, and {@code body} is the body of the
      * lambda. 
-     * Note that the bound variables are de-Bruijn indices created using {@link #mkBound}
+     * Note that the bound variables are de-Bruijn indices created using {#mkBound}
      * Z3 applies the convention that the last element in {@code names} and
      * {@code sorts} refers to the variable with index 0, the second to last element
      * of {@code names} and {@code sorts} refers to the variable
@@ -2957,6 +3082,106 @@ public class Context implements AutoCloseable {
     }
 
     /**
+     * The number of supported simplifiers.
+     **/
+    public int getNumSimplifiers()
+    {
+        return Native.getNumSimplifiers(nCtx());
+    }
+
+    /**
+     * The names of all supported simplifiers.
+     **/
+    public String[] getSimplifierNames()
+    {
+
+        int n = getNumSimplifiers();
+        String[] res = new String[n];
+        for (int i = 0; i < n; i++)
+            res[i] = Native.getSimplifierName(nCtx(), i);
+        return res;
+    }
+
+    /**
+     * Returns a string containing a description of the simplifier with the given
+     * name.
+     **/
+    public String getSimplifierDescription(String name)
+    {
+        return Native.simplifierGetDescr(nCtx(), name);
+    }
+
+    /**
+     * Creates a new Simplifier.
+     **/
+    public Simplifier mkSimplifier(String name)
+    {
+        return new Simplifier(this, name);
+    }
+
+    /**
+     * Create a simplifier that applies {@code t1} and then {@code t1}
+     **/
+    public Simplifier andThen(Simplifier t1, Simplifier t2, Simplifier... ts)
+
+    {
+        checkContextMatch(t1);
+        checkContextMatch(t2);
+        checkContextMatch(ts);
+
+        long last = 0;
+        if (ts != null && ts.length > 0)
+        {
+            last = ts[ts.length - 1].getNativeObject();
+            for (int i = ts.length - 2; i >= 0; i--) {
+                last = Native.simplifierAndThen(nCtx(), ts[i].getNativeObject(),
+                    last);
+            }
+        }
+        if (last != 0)
+        {
+            last = Native.simplifierAndThen(nCtx(), t2.getNativeObject(), last);
+            return new Simplifier(this, Native.simplifierAndThen(nCtx(),
+                    t1.getNativeObject(), last));
+        } else
+            return new Simplifier(this, Native.simplifierAndThen(nCtx(),
+                    t1.getNativeObject(), t2.getNativeObject()));
+    }
+
+    /**
+     * Create a simplifier that applies {@code t1} and then {@code t2}
+     *
+     * Remarks:  Shorthand for {@code AndThen}. 
+     **/
+    public Simplifier then(Simplifier t1, Simplifier t2, Simplifier... ts)
+    {
+        return andThen(t1, t2, ts);
+    }
+
+    /**
+     * Create a simplifier that applies {@code t} using the given set of
+     * parameters {@code p}.
+     **/
+    public Simplifier usingParams(Simplifier t, Params p)
+    {
+        checkContextMatch(t);
+        checkContextMatch(p);
+        return new Simplifier(this, Native.simplifierUsingParams(nCtx(),
+                t.getNativeObject(), p.getNativeObject()));
+    }
+
+    /**
+     * Create a simplifier that applies {@code t} using the given set of
+     * parameters {@code p}.
+     * Remarks: Alias for
+     * {@code UsingParams}
+     **/
+    public Simplifier with(Simplifier t, Params p)
+    {
+        return usingParams(t, p);
+    }
+
+    /**
      * The number of supported Probes.
      **/
     public int getNumProbes()
@@ -3152,6 +3377,14 @@ public class Context implements AutoCloseable {
 
         return new Solver(this, Native.mkSolverFromTactic(nCtx(),
                 t.getNativeObject()));
+    }
+
+    /**
+     * Creates a solver that is uses the simplifier pre-processing.
+     **/
+    public Solver mkSolver(Solver s, Simplifier simp)
+    {
+        return new Solver(this, Native.solverAddSimplifier(nCtx(), s.getNativeObject(), simp.getNativeObject()));
     }
 
     /**
@@ -3941,6 +4174,37 @@ public class Context implements AutoCloseable {
         return new BitVecExpr(this, Native.mkFpaToFpIntReal(nCtx(), rm.getNativeObject(), exp.getNativeObject(), sig.getNativeObject(), s.getNativeObject()));
     }
 
+    /**
+     * Creates or a linear order.
+     * @param index The index of the order.
+     * @param sort The sort of the order.
+     */
+    public <R extends Sort> FuncDecl<BoolSort> mkLinearOrder(R sort, int index) {
+        return (FuncDecl<BoolSort>) FuncDecl.create(
+                this,
+                Native.mkLinearOrder(
+                        nCtx(),
+                        sort.getNativeObject(),
+                        index
+                )
+        );
+    }
+
+    /**
+     * Creates or a partial order.
+     * @param index The index of the order.
+     * @param sort The sort of the order.
+     */
+    public <R extends Sort> FuncDecl<BoolSort> mkPartialOrder(R sort, int index) {
+        return (FuncDecl<BoolSort>) FuncDecl.create(
+                this,
+                Native.mkPartialOrder(
+                    nCtx(),
+                    sort.getNativeObject(),
+                    index
+                )
+        );
+    }
 
     /**
      * Wraps an AST.
@@ -4053,6 +4317,7 @@ public class Context implements AutoCloseable {
     private SolverDecRefQueue m_Solver_DRQ = new SolverDecRefQueue();
     private StatisticsDecRefQueue m_Statistics_DRQ = new StatisticsDecRefQueue();
     private TacticDecRefQueue m_Tactic_DRQ = new TacticDecRefQueue();
+    private SimplifierDecRefQueue m_Simplifier_DRQ = new SimplifierDecRefQueue();
     private FixedpointDecRefQueue m_Fixedpoint_DRQ = new FixedpointDecRefQueue();
     private OptimizeDecRefQueue m_Optimize_DRQ = new OptimizeDecRefQueue();
     private ConstructorDecRefQueue m_Constructor_DRQ = new ConstructorDecRefQueue();
@@ -4137,6 +4402,11 @@ public class Context implements AutoCloseable {
         return m_Tactic_DRQ;
     }
 
+    public IDecRefQueue<Simplifier> getSimplifierDRQ()
+    {
+        return m_Simplifier_DRQ;
+    }
+
     public IDecRefQueue<Fixedpoint> getFixedpointDRQ()
     {
         return m_Fixedpoint_DRQ;
@@ -4167,6 +4437,7 @@ public class Context implements AutoCloseable {
         m_Optimize_DRQ.forceClear(this);
         m_Statistics_DRQ.forceClear(this);
         m_Tactic_DRQ.forceClear(this);
+        m_Simplifier_DRQ.forceClear(this);
         m_Fixedpoint_DRQ.forceClear(this);
 
         m_boolSort = null;

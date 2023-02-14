@@ -20,7 +20,7 @@ Revision History:
 
 --*/
 #include "tactic/tactical.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/arith_decl_plugin.h"
 #include "tactic/core/simplify_tactic.h"
 #include "ast/ast_smt2_pp.h"
@@ -283,6 +283,8 @@ public:
     ~degree_shift_tactic() override {
         dealloc(m_imp);
     }
+
+    char const* name() const override { return "degree_shift"; }
 
     void operator()(goal_ref const & in, 
                     goal_ref_buffer & result) override {

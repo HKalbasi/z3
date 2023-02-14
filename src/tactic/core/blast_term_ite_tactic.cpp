@@ -13,14 +13,12 @@ Author:
  
     Nikolaj Bjorner (nbjorner) 2013-11-4
 
-Notes:
-
 --*/
 #include "ast/normal_forms/defined_names.h"
 #include "ast/rewriter/rewriter_def.h"
 #include "ast/scoped_proof.h"
 #include "tactic/tactical.h"
-#include "tactic/tactic_params.hpp"
+#include "params/tactic_params.hpp"
 
 
 
@@ -171,15 +169,17 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "blast_term_ite"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->m_rw.m_cfg.updt_params(p);
+        m_params.append(p);
+        m_imp->m_rw.m_cfg.updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         insert_max_memory(r);
         insert_max_steps(r);
-        r.insert("max_inflation", CPK_UINT, "(default: infinity) multiplicative factor of initial term size.");
+        r.insert("max_inflation", CPK_UINT, "(default: infinity) multiplicative factor of initial term size.", "4294967295");
     }
     
     void operator()(goal_ref const & in, goal_ref_buffer & result) override {

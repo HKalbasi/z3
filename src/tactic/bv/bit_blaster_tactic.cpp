@@ -119,18 +119,20 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "bit_blaster"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         insert_max_memory(r);
         insert_max_steps(r);
-        r.insert("blast_mul", CPK_BOOL, "(default: true) bit-blast multipliers (and dividers, remainders).");
-        r.insert("blast_add", CPK_BOOL, "(default: true) bit-blast adders.");
-        r.insert("blast_quant", CPK_BOOL, "(default: false) bit-blast quantified variables.");
-        r.insert("blast_full", CPK_BOOL, "(default: false) bit-blast any term with bit-vector sort, this option will make E-matching ineffective in any pattern containing bit-vector terms.");
+        r.insert("blast_mul", CPK_BOOL, "bit-blast multipliers (and dividers, remainders).", "true");
+        r.insert("blast_add", CPK_BOOL, "bit-blast adders.", "true");
+        r.insert("blast_quant", CPK_BOOL, "bit-blast quantified variables.", "false");
+        r.insert("blast_full", CPK_BOOL, "bit-blast any term with bit-vector sort, this option will make E-matching ineffective in any pattern containing bit-vector terms.", "false");
     }
      
     void operator()(goal_ref const & g, 

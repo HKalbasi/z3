@@ -270,8 +270,7 @@ ALIASES                = "beginfaq=<ul>" \
                          "emph{1}=<em>\1</em>" \
                          "extdoc{2}=<a class=\"el\" href=\"\1\">\2</a>" \
                          "nicebox{1}=<div class=\"fragment\"><pre class=\"fragment\">\1</pre></div>" \
-                         "ccode{1}=<tt>\1</tt>" \
-                         "zframe=<iframe allowtransparency=\"true\" frameborder=\"0\" style=\"width:600px;height:600px\" src=\"http://rise4fun.com/z3?frame=1&menu=0\"> </iframe>"
+                         "ccode{1}=<tt>\1</tt>"
 
 # This tag can be used to specify a number of word-keyword mappings (TCL only).
 # A mapping has the form "name=value". For example adding "class=itcl::class"
@@ -2172,7 +2171,6 @@ INCLUDE_FILE_PATTERNS  =
 # This tag requires that the tag ENABLE_PREPROCESSING is set to YES.
 
 PREDEFINED             = Z3_ast_opt:=Z3_ast \
-                         Z3_bool_opt:=Z3_bool \
                          Z3_func_interp_opt:=Z3_func_interp \
                          Z3_model_opt:=Z3_model \
                          __out_opt:=__out

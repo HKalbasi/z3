@@ -47,10 +47,11 @@ Notes:
 #include "model/model_v2_pp.h"
 #include "model/model_params.hpp"
 #include "tactic/tactic_exception.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "solver/smt_logics.h"
 #include "cmd_context/basic_cmds.h"
 #include "cmd_context/cmd_context.h"
+#include <iostream>
 
 func_decls::func_decls(ast_manager & m, func_decl * f):
     m_decls(TAG(func_decl*, f, 0)) {
@@ -365,7 +366,7 @@ void cmd_context::insert_macro(symbol const& s, unsigned arity, sort*const* doma
     // recursive functions have opposite calling convention from macros!
     var_subst sub(m(), true);
     expr_ref tt = sub(t, rvars);
-    p.set_definition(replace, d, vars.size(), vars.data(), tt);
+    p.set_definition(replace, d, true, vars.size(), vars.data(), tt);
     register_fun(s, d.get_def()->get_decl());
 }
 
@@ -492,7 +493,6 @@ protected:
 
 public:
     pp_env(cmd_context & o):m_owner(o), m_autil(o.m()), m_bvutil(o.m()), m_arutil(o.m()), m_futil(o.m()), m_sutil(o.m()), m_dtutil(o.m()), m_dlutil(o.m()) {}
-    ~pp_env() override {}
     ast_manager & get_manager() const override { return m_owner.m(); }
     arith_util & get_autil() override { return m_autil; }
     bv_util & get_bvutil() override { return m_bvutil; }
@@ -537,28 +537,16 @@ public:
 cmd_context::cmd_context(bool main_ctx, ast_manager * m, symbol const & l):
     m_main_ctx(main_ctx),
     m_logic(l),
-    m_interactive_mode(false),
-    m_global_decls(false),
     m_print_success(m_params.m_smtlib2_compliant),
-    m_random_seed(0),
-    m_produce_unsat_cores(false),
-    m_produce_unsat_assumptions(false),
-    m_produce_assignments(false),
-    m_status(UNKNOWN),
-    m_numeral_as_real(false),
-    m_ignore_check(false),
-    m_exit_on_error(false),
     m_manager(m),
     m_own_manager(m == nullptr),
-    m_manager_initialized(false),
-    m_pmanager(nullptr),
-    m_sexpr_manager(nullptr),
     m_regular("stdout", std::cout),
     m_diagnostic("stderr", std::cerr) {
     SASSERT(m != 0 || !has_manager());
     install_basic_cmds(*this);
     install_ext_basic_cmds(*this);
     install_core_tactic_cmds(*this);
+    install_core_simplifier_cmds(*this);
     m_mcs.push_back(nullptr);
     SASSERT(m != 0 || !has_manager());
     if (m_main_ctx) {
@@ -572,8 +560,8 @@ cmd_context::~cmd_context() {
     }
     pop(m_scopes.size());
     finalize_cmds();
-    finalize_tactic_cmds();
-    finalize_probes();
+    finalize_tactic_manager();
+    m_proof_cmds = nullptr;
     reset(true);
     m_mcs.reset();
     m_solver = nullptr;
@@ -597,9 +585,8 @@ opt_wrapper* cmd_context::get_opt() {
 
 void cmd_context::set_opt(opt_wrapper* opt) {
     m_opt = opt;
-    for (unsigned i = 0; i < m_scopes.size(); ++i) {
+    for (unsigned i = 0; i < m_scopes.size(); ++i) 
         m_opt->push();
-    }
     m_opt->set_logic(m_logic);
 }
 
@@ -607,6 +594,7 @@ void cmd_context::global_params_updated() {
     m_params.updt_params();
     if (m_params.m_smtlib2_compliant)
         m_print_success = true;
+    set_produce_proofs(m_params.m_proof);
     if (m_solver) {
         params_ref p;
         if (!m_params.m_auto_config)
@@ -616,6 +604,8 @@ void cmd_context::global_params_updated() {
     if (m_opt) {
         get_opt()->updt_params(gparams::get_module("opt"));
     }
+    if (m_proof_cmds)
+        m_proof_cmds->updt_params(gparams::get_module("solver"));
 }
 
 void cmd_context::set_produce_models(bool f) {
@@ -626,14 +616,20 @@ void cmd_context::set_produce_models(bool f) {
 
 void cmd_context::set_produce_unsat_cores(bool f) {
     // can only be set before initialization
-    SASSERT(!has_manager());
+    SASSERT(!has_assertions());
     m_params.m_unsat_core |= f;
 }
 
 void cmd_context::set_produce_proofs(bool f) {
-    // can only be set before initialization
-    SASSERT(!has_manager());
+    if (m_params.m_proof == f)
+        return;
+    SASSERT(!has_assertions());
     m_params.m_proof = f;
+    if (has_manager()) {
+        m().toggle_proof_mode(f ? PGM_ENABLED : PGM_DISABLED);
+        if (m_solver_factory)
+            mk_solver();
+    }
 }
 
 
@@ -793,7 +789,7 @@ void cmd_context::init_manager_core(bool new_manager) {
         TRACE("cmd_context", tout << "init manager " << m_logic << "\n";);
         // add list type only if the logic is not specified.
         // it prevents clashes with builtin types.
-        insert(pm().mk_plist_decl());
+        register_plist();
     }
     if (m_solver_factory) {
         mk_solver();
@@ -835,15 +831,16 @@ bool cmd_context::set_logic(symbol const & s) {
     TRACE("cmd_context", tout << s << "\n";);
     if (has_logic())
         throw cmd_exception("the logic has already been set");
-    if (has_manager() && m_main_ctx)
+    if (has_assertions() && m_main_ctx)
         throw cmd_exception("logic must be set before initialization");
-    if (!smt_logics::supported_logic(s)) {
+    if (!smt_logics::supported_logic(s)) 
         return false;
-    }
+
     m_logic = s;
-    if (smt_logics::logic_has_reals_only(s)) {
+    if (m_solver)
+        mk_solver();
+    if (smt_logics::logic_has_reals_only(s)) 
         m_numeral_as_real = true;
-    }
     return true;
 }
 
@@ -1004,7 +1001,7 @@ void cmd_context::insert_rec_fun(func_decl* f, expr_ref_vector const& binding, s
     
     recfun::promise_def d = p.get_promise_def(f);
     recfun_replace replace(m());
-    p.set_definition(replace, d, vars.size(), vars.data(), rhs);
+    p.set_definition(replace, d, false, vars.size(), vars.data(), rhs);
 }
 
 func_decl * cmd_context::find_func_decl(symbol const & s) const {
@@ -1065,7 +1062,7 @@ func_decl * cmd_context::find_func_decl(symbol const & s, unsigned num_indices, 
     if (f) 
         return f;
     builtin_decl d;
-    if (domain && m_builtin_decls.find(s, d)) {
+    if ((arity == 0 || domain) && m_builtin_decls.find(s, d)) {
         family_id fid = d.m_fid;
         decl_kind k   = d.m_decl;
         // Hack: if d.m_next != 0, we use domain[0] (if available) to decide which plugin we use.
@@ -1088,7 +1085,12 @@ func_decl * cmd_context::find_func_decl(symbol const & s, unsigned num_indices, 
             throw cmd_exception("invalid function declaration reference, invalid builtin reference ", s);
         return f;
     }
-    throw cmd_exception("invalid function declaration reference, unknown function ", s);
+    if (num_indices > 0 && m_func_decls.find(s, fs)) 
+        f = fs.find(m(), arity, domain, range);
+    if (f) 
+        return f;
+
+    throw cmd_exception("invalid function declaration reference, unknown indexed function ", s);
 }
 
 psort_decl * cmd_context::find_psort_decl(symbol const & s) const {
@@ -1137,12 +1139,10 @@ bool cmd_context::try_mk_builtin_app(symbol const & s, unsigned num_args, expr *
         fid = d2.m_fid;
         k   = d2.m_decl;
     }
-    if (num_indices == 0) {
-        result = m().mk_app(fid, k, 0, nullptr, num_args, args, range);
-    }
-    else {
-        result = m().mk_app(fid, k, num_indices, indices, num_args, args, range);
-    }
+    if (num_indices == 0) 
+        result = m().mk_app(fid, k, 0, nullptr, num_args, args, range);    
+    else 
+        result = m().mk_app(fid, k, num_indices, indices, num_args, args, range);    
     CHECK_SORT(result.get());
     return nullptr != result.get();
 }
@@ -1194,6 +1194,59 @@ bool cmd_context::try_mk_macro_app(symbol const & s, unsigned num_args, expr * c
     return false;
 }
 
+bool cmd_context::try_mk_pdecl_app(symbol const & s, unsigned num_args, expr * const * args, unsigned num_indices, parameter const * indices, expr_ref & r) const {
+    sort_ref_vector binding(m());
+    auto match = [&](sort* s, sort* ps) {
+        if (ps == s)
+            return true;
+        if (m().is_uninterp(ps) && ps->get_name().is_numerical()) {
+            int index = ps->get_name().get_num();
+            if (index < 0)
+                return false;
+            binding.reserve(index + 1);
+            if (binding.get(index) && binding.get(index) != s)
+                return false;
+            binding[index] = s;
+            return true;
+        }
+        // Other matching is TBD
+        return false;
+    };
+    datatype::util dt(m());
+    func_decl_ref fn(m());
+    for (auto* c : dt.plugin().get_constructors(s)) {
+        if (c->accessors().size() != num_args)
+            continue;
+        binding.reset();
+        unsigned i = 0;
+        for (auto* a : *c) 
+            if (!match(args[i++]->get_sort(), a->range()))
+                goto match_failure;
+        if (binding.size() != c->get_def().params().size())
+            goto match_failure;
+        for (auto* b : binding)
+            if (!b)
+                goto match_failure;
+        
+        fn = c->instantiate(binding);
+        r = m().mk_app(fn, num_args, args);
+        return true;
+    match_failure:
+        ;
+    }    
+    if (num_args != 1)
+        return false;
+
+    for (auto* a : dt.plugin().get_accessors(s)) {        
+        fn = a->instantiate(args[0]->get_sort());
+        r = m().mk_app(fn, num_args, args);
+        return true;
+    }
+    
+    return false;
+}
+
+
 void cmd_context::mk_app(symbol const & s, unsigned num_args, expr * const * args, 
                          unsigned num_indices, parameter const * indices, sort * range,
                          expr_ref & result) const {
@@ -1206,7 +1259,9 @@ void cmd_context::mk_app(symbol const & s, unsigned num_args, expr * const * arg
         return;    
     if (try_mk_builtin_app(s, num_args, args, num_indices, indices, range, result)) 
         return;
-
+    if (!range && try_mk_pdecl_app(s, num_args, args, num_indices, indices, result))
+        return;
+    
     std::ostringstream buffer;
     buffer << "unknown constant " << s;
     if (num_args > 0) {
@@ -1581,6 +1636,7 @@ void cmd_context::pop(unsigned n) {
     restore_aux_pdecls(s.m_aux_pdecls_lim);
     restore_assertions(s.m_assertions_lim);
     restore_psort_inst(s.m_psort_inst_stack_lim);
+    m_dt_eh.get()->reset();
     m_mcs.shrink(m_mcs.size() - n);
     m_scopes.shrink(new_lvl);
     if (!m_global_decls)
@@ -1760,6 +1816,9 @@ void cmd_context::display_model(model_ref& mdl) {
 }
 
 void cmd_context::add_declared_functions(model& mdl) {
+    model_params p;
+    if (!p.user_functions())
+        return;
     for (auto const& kv : m_func_decls) {
         func_decl* f = kv.m_value.first();
         if (f->get_family_id() == null_family_id && !mdl.has_interpretation(f)) {
@@ -1773,12 +1832,15 @@ void cmd_context::add_declared_functions(model& mdl) {
                 mdl.register_decl(f, fi);
             }
         }
-        mdl.add_rec_funs();
     }
-    
+    mdl.add_rec_funs();    
 }
 
 void cmd_context::display_sat_result(lbool r) {
+    if (has_manager() && m().has_trace_stream()) {
+        m().trace_stream().flush();
+    }
+
     switch (r) {
     case l_true:
         regular_stream() << "sat" << std::endl;
@@ -1899,7 +1961,7 @@ void cmd_context::complete_model(model_ref& md) const {
             SASSERT(!v->has_var_params());
             IF_VERBOSE(12, verbose_stream() << "(model.completion " << k << ")\n"; );
             ptr_vector<sort> param_sorts(v->get_num_params(), m().mk_bool_sort());
-            sort * srt = v->instantiate(*m_pmanager, param_sorts.size(), param_sorts.data());
+            sort * srt = v->instantiate(pm(), param_sorts.size(), param_sorts.data());
             if (!md->has_uninterpreted_sort(srt)) {
                 expr * singleton = m().get_some_value(srt);
                 md->register_usort(srt, 1, &singleton);
@@ -2053,6 +2115,21 @@ void cmd_context::analyze_failure(expr_mark& seen, model_evaluator& ev, expr* a,
                << (expected_value?"true":"false") << "\n";);                
 
     IF_VERBOSE(11, display_detailed_analysis(verbose_stream(), ev, a));
+
+    if (m().is_iff(a)) {
+        ptr_vector<expr> todo;
+        todo.push_back(a);
+        for (unsigned i = 0; i < todo.size(); ++i) {
+            e = todo[i];
+            if (m().is_and(e) || m().is_or(e) || m().is_iff(e) || m().is_implies(e) || m().is_not(e)) 
+                for (expr* arg : *to_app(e))
+                    todo.push_back(arg);
+            else
+                IF_VERBOSE(10, verbose_stream() << "#" << e->get_id() << " " << mk_bounded_pp(e, m()) << " " << (ev.is_true(e)?"true":"false") << "\n");
+        }
+        return;
+    }
+
 }
 
 void cmd_context::display_detailed_analysis(std::ostream& out, model_evaluator& ev, expr* e) {
@@ -2124,28 +2201,28 @@ void cmd_context::display_statistics(bool show_total_time, double total_time) {
 }
 
 
-expr_ref_vector cmd_context::tracked_assertions() {
-    expr_ref_vector result(m());
+vector<std::pair<expr*,expr*>> cmd_context::tracked_assertions() {
+    vector<std::pair<expr*,expr*>> result;
     if (assertion_names().size() == assertions().size()) {
         for (unsigned i = 0; i < assertions().size(); ++i) {
             expr* an  = assertion_names()[i];
             expr* asr = assertions()[i];
-            if (an) {
-                result.push_back(m().mk_implies(an, asr));
-            }
-            else {
-                result.push_back(asr);
-            }
+            result.push_back({ asr, an });
         }
     }
     else {
-        for (expr * e : assertions()) {
-            result.push_back(e);
-        }
+        for (expr * e : assertions()) 
+            result.push_back({ e, nullptr});
     }
     return result;
 }
 
+void cmd_context::reset_tracked_assertions() {
+    m_assertion_names.reset();
+    for (expr* a : m_assertions)
+        m().dec_ref(a);
+    m_assertions.reset();
+}
 
 void cmd_context::display_assertions() {
     if (!m_interactive_mode)
@@ -2181,9 +2258,8 @@ format_ns::format * cmd_context::pp(sort * s) const {
 }
 
 cmd_context::pp_env & cmd_context::get_pp_env() const {
-    if (m_pp_env.get() == nullptr) {
+    if (m_pp_env.get() == nullptr) 
         const_cast<cmd_context*>(this)->m_pp_env = alloc(pp_env, *const_cast<cmd_context*>(this));
-    }
     return *(m_pp_env.get());
 }
 
@@ -2241,9 +2317,8 @@ void cmd_context::display_smt2_benchmark(std::ostream & out, unsigned num, expr 
         out << "(set-logic " << logic << ")" << std::endl;
     // collect uninterpreted function declarations
     decl_collector decls(m());
-    for (unsigned i = 0; i < num; i++) {
+    for (unsigned i = 0; i < num; i++) 
         decls.visit(assertions[i]);
-    }
 
     // TODO: display uninterpreted sort decls, and datatype decls.
 
@@ -2269,9 +2344,8 @@ void cmd_context::slow_progress_sample() {
     svector<symbol> labels;
     m_solver->get_labels(labels);
     regular_stream() << "(labels";
-    for (symbol const& s : labels) {
+    for (symbol const& s : labels) 
         regular_stream() << " " << s;
-    }
     regular_stream() << "))" << std::endl;
 }
 

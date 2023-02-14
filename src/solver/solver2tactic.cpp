@@ -19,7 +19,7 @@ Notes:
 
 #include "solver/solver.h"
 #include "tactic/tactic.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "solver/solver2tactic.h"
 #include "ast/ast_util.h"
 
@@ -164,6 +164,7 @@ public:
                     in->assert_expr(local_solver->get_assertion(i));
                 }
             }
+            in->set_reason_unknown(local_solver->reason_unknown());
             result.push_back(in.get());
             break;
         }
@@ -186,6 +187,8 @@ public:
     tactic * translate(ast_manager & m) override {
         return alloc(solver2tactic, m_solver->translate(m, m_params));
     }    
+
+    char const* name() const override { return "solver2tactic"; }
 };
 
 tactic* mk_solver2tactic(solver* s) { return alloc(solver2tactic, s); }

@@ -273,6 +273,17 @@ public:
     bool is_rem0(func_decl const * n) const { return is_decl_of(n, arith_family_id, OP_REM0); }
     bool is_mod0(func_decl const * n) const { return is_decl_of(n, arith_family_id, OP_MOD0); }
     bool is_power0(func_decl const * n) const { return is_decl_of(n, arith_family_id, OP_POWER0); }
+    bool is_power(func_decl const * n) const { return is_decl_of(n, arith_family_id, OP_POWER); }
+    bool is_add(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_ADD); }
+    bool is_mul(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_MUL); }
+    bool is_sub(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_SUB); }
+    bool is_uminus(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_UMINUS); }
+    bool is_div(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_DIV); }
+    bool is_rem(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_REM); }
+    bool is_mod(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_MOD); }
+    bool is_to_real(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_TO_REAL); }
+    bool is_to_int(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_TO_INT); }
+    bool is_is_int(func_decl const* f) const { return is_decl_of(f, arith_family_id, OP_IS_INT); }
 
     bool is_add(expr const * n) const { return is_app_of(n, arith_family_id, OP_ADD); }
     bool is_sub(expr const * n) const { return is_app_of(n, arith_family_id, OP_SUB); }
@@ -291,6 +302,7 @@ public:
     bool is_is_int(expr const * n) const { return is_app_of(n, arith_family_id, OP_IS_INT); }
     bool is_power(expr const * n) const { return is_app_of(n, arith_family_id, OP_POWER); }
     bool is_power0(expr const * n) const { return is_app_of(n, arith_family_id, OP_POWER0); }
+    bool is_abs(expr const* n) const { return is_app_of(n, arith_family_id, OP_ABS); }
 
     bool is_int(sort const * s) const { return is_sort_of(s, arith_family_id, INT_SORT); }
     bool is_int(expr const * n) const { return is_int(n->get_sort()); }
@@ -330,6 +342,7 @@ public:
     MATCH_UNARY(is_to_real);
     MATCH_UNARY(is_to_int);
     MATCH_UNARY(is_is_int);
+    MATCH_UNARY(is_abs);
     MATCH_BINARY(is_sub);
     MATCH_BINARY(is_add);
     MATCH_BINARY(is_mul);
@@ -434,12 +447,17 @@ public:
     app * mk_add(expr * arg1, expr * arg2, expr* arg3) const { return m_manager.mk_app(arith_family_id, OP_ADD, arg1, arg2, arg3); }
     app * mk_add(expr_ref_vector const& args) const { return mk_add(args.size(), args.data()); }
     app * mk_add(expr_ref_buffer const& args) const { return mk_add(args.size(), args.data()); }
+    app * mk_add(ptr_buffer<expr> const& args) const { return mk_add(args.size(), args.data()); }
+    app * mk_add(ptr_vector<expr> const& args) const { return mk_add(args.size(), args.data()); }
 
     app * mk_sub(expr * arg1, expr * arg2) const { return m_manager.mk_app(arith_family_id, OP_SUB, arg1, arg2); }
     app * mk_sub(unsigned num_args, expr * const * args) const { return m_manager.mk_app(arith_family_id, OP_SUB, num_args, args); }
     app * mk_mul(expr * arg1, expr * arg2) const { return m_manager.mk_app(arith_family_id, OP_MUL, arg1, arg2); }
     app * mk_mul(expr * arg1, expr * arg2, expr* arg3) const { return m_manager.mk_app(arith_family_id, OP_MUL, arg1, arg2, arg3); }
     app * mk_mul(unsigned num_args, expr * const * args) const { return num_args == 1 && is_app(args[0]) ? to_app(args[0]) : m_manager.mk_app(arith_family_id, OP_MUL, num_args, args); }
+    app * mk_mul(ptr_buffer<expr> const& args) const { return mk_mul(args.size(), args.data()); }
+    app * mk_mul(ptr_vector<expr> const& args) const { return mk_mul(args.size(), args.data()); }
+    app * mk_mul(expr_ref_vector const& args) const { return mk_mul(args.size(), args.data()); }
     app * mk_uminus(expr * arg) const { return m_manager.mk_app(arith_family_id, OP_UMINUS, arg); }
     app * mk_div(expr * arg1, expr * arg2) { return m_manager.mk_app(arith_family_id, OP_DIV, arg1, arg2); }
     app * mk_idiv(expr * arg1, expr * arg2) { return m_manager.mk_app(arith_family_id, OP_IDIV, arg1, arg2); }

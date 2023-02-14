@@ -78,7 +78,7 @@ namespace {
 
     public:
         unsigned char operator()(func_decl * lbl) {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             if (lbl_id >= m_lbl2hash.size())
                 m_lbl2hash.resize(lbl_id + 1, -1);
             if (m_lbl2hash[lbl_id] == -1) {
@@ -121,7 +121,7 @@ namespace {
 
     struct instruction {
         opcode         m_opcode;
-        instruction *  m_next;
+        instruction* m_next = nullptr;
 #ifdef _PROFILE_MAM
         unsigned       m_counter; // how often it was executed
 #endif
@@ -1224,9 +1224,10 @@ namespace {
                     return;
 
             SASSERT(head->m_next == 0);
+
             m_seq.push_back(m_ct_manager.mk_yield(m_qa, m_mp, m_qa->get_num_decls(), reinterpret_cast<unsigned*>(m_vars.begin())));
 
-            for (instruction * curr : m_seq) {
+            for (instruction* curr : m_seq) {
                 head->m_next = curr;
                 head = curr;
             }
@@ -1951,7 +1952,7 @@ namespace {
                     m_args[i] = m_registers[pc->m_iregs[i]]->get_root();
                 SASSERT(n != 0);
                 do {
-                    if (n->get_decl() == f) {
+                    if (n->get_decl() == f && n->get_num_args() == num_args) {
                         unsigned i = 0;
                         for (; i < num_args; i++) {
                             if (n->get_arg(i)->get_root() != m_args[i])
@@ -2005,33 +2006,36 @@ namespace {
                 m_backtrack_stack.resize(t->get_num_choices());
         }
 
-        void execute(code_tree * t) {
+        bool execute(code_tree * t) {
             TRACE("trigger_bug", tout << "execute for code tree:\n"; t->display(tout););
             init(t);
+#define CLEANUP  for (enode* app : t->get_candidates()) if (app->is_marked()) app->unset_mark();
             if (t->filter_candidates()) {
                 for (enode* app : t->get_candidates()) {
                     TRACE("trigger_bug", tout << "candidate\n" << mk_ismt2_pp(app->get_expr(), m) << "\n";);
                     if (!app->is_marked() && app->is_cgr()) {
-                        if (m_context.resource_limits_exceeded() || !execute_core(t, app))
-                            return;
+                        if (m_context.resource_limits_exceeded() || !execute_core(t, app)) {
+                            CLEANUP;
+                            return false;
+                        }
                         app->set_mark();
                     }
                 }
-                for (enode* app : t->get_candidates()) {
-                    if (app->is_marked())
-                        app->unset_mark();
-                }
+                CLEANUP;
+                
             }
             else {
                 for (enode* app : t->get_candidates()) {
                     TRACE("trigger_bug", tout << "candidate\n" << mk_ismt2_pp(app->get_expr(), m) << "\n";);
                     if (app->is_cgr()) {
                         TRACE("trigger_bug", tout << "is_cgr\n";);
+                        // scoped_suspend_rlimit susp(m.limit(), false);
                         if (m_context.resource_limits_exceeded() || !execute_core(t, app))
-                            return;
+                            return false;
                     }
                 }
             }
+            return true;
         }
 
         // init(t) must be invoked before execute_core
@@ -2090,7 +2094,6 @@ namespace {
         enode * n = m_registers[j2->m_reg]->get_root();
         if (n->get_num_parents() == 0)
             return nullptr;
-        unsigned num_args = n->get_num_args();
         enode_vector * v  = mk_enode_vector();
         enode_vector::const_iterator it1  = n->begin_parents();
         enode_vector::const_iterator end1 = n->end_parents();
@@ -2108,11 +2111,9 @@ namespace {
                 for (; it2 != end2; ++it2) {
                     enode * p2 = *it2;
                     if (p2->get_decl() == f &&
-                        num_args == n->get_num_args() && 
-                        num_args == p2->get_num_args() &&
                         m_context.is_relevant(p2) &&
                         p2->is_cgr() &&
-                        i < num_args && 
+                        i < p2->get_num_args() && 
                         p2->get_arg(i)->get_root() == p) {
                         v->push_back(p2);
                     }
@@ -2309,7 +2310,10 @@ namespace {
 
     main_loop:
 
+        if (!m_pc)
+            goto backtrack;
         TRACE("mam_int", display_pc_info(tout););
+        
 #ifdef _PROFILE_MAM
         const_cast<instruction*>(m_pc)->m_counter++;
 #endif
@@ -2905,7 +2909,7 @@ namespace {
             SASSERT(first_idx < mp->get_num_args());
             app * p           = to_app(mp->get_arg(first_idx));
             func_decl * lbl   = p->get_decl();
-            unsigned lbl_id   = lbl->get_decl_id();
+            unsigned lbl_id   = lbl->get_small_id();
             m_trees.reserve(lbl_id+1, nullptr);
             if (m_trees[lbl_id] == nullptr) {
                 m_trees[lbl_id] = m_compiler.mk_tree(qa, mp, first_idx, false);
@@ -2934,7 +2938,7 @@ namespace {
         }
 
         code_tree * get_code_tree_for(func_decl * lbl) const {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             if (lbl_id < m_trees.size())
                 return m_trees[lbl_id];
             else
@@ -3164,11 +3168,11 @@ namespace {
         }
 
         bool is_plbl(func_decl * lbl) const {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             return lbl_id < m_is_plbl.size() && m_is_plbl[lbl_id];
         }
         bool is_clbl(func_decl * lbl) const {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             return lbl_id < m_is_clbl.size() && m_is_clbl[lbl_id];
         }
 
@@ -3181,7 +3185,7 @@ namespace {
         }
 
         void update_clbls(func_decl * lbl) {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             m_is_clbl.reserve(lbl_id+1, false);
             TRACE("trigger_bug", tout << "update_clbls: " << lbl->get_name() << " is already clbl: " << m_is_clbl[lbl_id] << "\n";);
             TRACE("mam_bug", tout << "update_clbls: " << lbl->get_name() << " is already clbl: " << m_is_clbl[lbl_id] << "\n";);
@@ -3221,7 +3225,7 @@ namespace {
         }
 
         void update_plbls(func_decl * lbl) {
-            unsigned lbl_id = lbl->get_decl_id();
+            unsigned lbl_id = lbl->get_small_id();
             m_is_plbl.reserve(lbl_id+1, false);
             TRACE("trigger_bug", tout << "update_plbls: " << lbl->get_name() << " is already plbl: " << m_is_plbl[lbl_id] << ", lbl_id: " << lbl_id << "\n";
                   tout << "mam: " << this << "\n";);
@@ -3743,7 +3747,7 @@ namespace {
                 app *        p     = to_app(mp->get_arg(0));
                 func_decl *  lbl   = p->get_decl();
                 if (m_context.get_num_enodes_of(lbl) > 0) {
-                    unsigned lbl_id = lbl->get_decl_id();
+                    unsigned lbl_id = lbl->get_small_id();
                     m_tmp_trees.reserve(lbl_id+1, 0);
                     if (m_tmp_trees[lbl_id] == 0) {
                         m_tmp_trees[lbl_id] = m_compiler.mk_tree(qa, mp, 0, false);
@@ -3756,7 +3760,7 @@ namespace {
             }
 
             for (func_decl * lbl : m_tmp_trees_to_delete) {
-                unsigned    lbl_id   = lbl->get_decl_id();
+                unsigned    lbl_id   = lbl->get_small_id();
                 code_tree * tmp_tree = m_tmp_trees[lbl_id];
                 SASSERT(tmp_tree != 0);
                 SASSERT(m_context.get_num_enodes_of(lbl) > 0);
@@ -3885,7 +3889,8 @@ namespace {
             TRACE("trigger_bug", tout << "match\n"; display(tout););
             for (code_tree* t : m_to_match) {
                 SASSERT(t->has_candidates());
-                m_interpreter.execute(t);
+                if (!m_interpreter.execute(t))
+                    return;
                 t->reset_candidates();
             }
             m_to_match.reset();
@@ -3962,7 +3967,7 @@ namespace {
                 unsigned h      = m_lbl_hasher(lbl);
                 TRACE("trigger_bug", tout << "lbl: " << lbl->get_name() << " is_clbl(lbl): " << is_clbl(lbl)
                       << ", is_plbl(lbl): " << is_plbl(lbl) << ", h: " << h << "\n";
-                      tout << "lbl_id: " << lbl->get_decl_id() << "\n";);
+                      tout << "lbl_id: " << lbl->get_small_id() << "\n";);
                 if (is_clbl(lbl))
                     update_lbls(n, h);
                 if (is_plbl(lbl))

@@ -122,7 +122,7 @@ bool array_decl_plugin::is_array_sort(sort* s) const {
 
 func_decl * array_decl_plugin::mk_const(sort * s, unsigned arity, sort * const * domain) {
     if (arity != 1) {
-        m_manager->raise_exception("invalid const array definition, invalid domain size");
+        m_manager->raise_exception("invalid const array definition, expected one argument");
         return nullptr;
     }
     if (!is_array_sort(s)) {
@@ -326,7 +326,9 @@ func_decl * array_decl_plugin::mk_array_ext(unsigned arity, sort * const * domai
     }
     sort * r = to_sort(s->get_parameter(i).get_ast());
     parameter param(i);
-    return m_manager->mk_func_decl(m_array_ext_sym, arity, domain, r, func_decl_info(m_family_id, OP_ARRAY_EXT, 1, &param));
+    func_decl_info info(func_decl_info(m_family_id, OP_ARRAY_EXT, 1, &param));
+    info.set_commutative(true);
+    return m_manager->mk_func_decl(m_array_ext_sym, arity, domain, r, info);
 }
 
 
@@ -587,6 +589,7 @@ void array_decl_plugin::get_op_names(svector<builtin_name>& op_names, symbol con
         op_names.push_back(builtin_name("subset",OP_SET_SUBSET));
         op_names.push_back(builtin_name("as-array", OP_AS_ARRAY));
         op_names.push_back(builtin_name("array-ext", OP_ARRAY_EXT));
+
 #if 0
         op_names.push_back(builtin_name("set-has-size", OP_SET_HAS_SIZE));
         op_names.push_back(builtin_name("card", OP_SET_CARD));
@@ -612,6 +615,24 @@ bool array_decl_plugin::is_fully_interp(sort * s) const {
     }
     return m_manager->is_fully_interp(get_array_range(s));
 }
+
+bool array_decl_plugin::is_value(app * _e) const {
+    expr* e = _e;
+    array_util u(*m_manager);
+    while (true) {
+        if (u.is_const(e, e))
+            return m_manager->is_value(e);
+        if (u.is_store(e)) {            
+            for (unsigned i = 1; i < to_app(e)->get_num_args(); ++i)
+                if (!m_manager->is_value(to_app(e)->get_arg(i)))
+                    return false;
+            e = to_app(e)->get_arg(0);
+            continue;
+        }
+        return false;
+    }
+}
+
 
 func_decl * array_recognizers::get_as_array_func_decl(expr * n) const { 
     SASSERT(is_as_array(n)); 
@@ -687,3 +708,4 @@ func_decl* array_util::mk_array_ext(sort *domain, unsigned i) {
     parameter p(i);
     return m_manager.mk_func_decl(m_fid, OP_ARRAY_EXT, 1, &p, 2, domains);
 }
+

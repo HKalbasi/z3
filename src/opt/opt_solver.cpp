@@ -259,6 +259,12 @@ namespace opt {
         if (!m_models[i]) 
             m_models.set(i, m_last_model.get());
 
+        if (val > m_objective_values[i])
+            m_objective_values[i] = val;    
+
+        if (!m_last_model)
+            return true;
+
         //
         // retrieve value of objective from current model and update 
         // current optimal.
@@ -267,7 +273,7 @@ namespace opt {
             rational r;
             expr_ref value = (*m_last_model)(m_objective_terms.get(i));
             if (arith_util(m).is_numeral(value, r) && r > m_objective_values[i])
-                m_objective_values[i] = inf_eps(r);            
+                m_objective_values[i] = inf_eps(r);   
         };
 
         update_objective();
@@ -281,7 +287,9 @@ namespace opt {
             bool ok = bound_value(i, val);
             if (l_true != m_context.check(0, nullptr))  
                 return false;
-            m_context.get_model(m_last_model);   
+            m_context.get_model(m_last_model);
+            if (!m_last_model)
+                return false;
             update_objective();
             return ok;
         };
@@ -293,7 +301,9 @@ namespace opt {
             TRACE("opt", tout << "updated\n";);
             m_last_model = nullptr;
             m_context.get_model(m_last_model);
-            if (!has_shared || val == current_objective_value(i))
+            if (!m_last_model)
+                return false;
+            else if (!has_shared || val == current_objective_value(i))
                 m_models.set(i, m_last_model.get());
             else if (!check_bound())
                 return false;
@@ -342,6 +352,11 @@ namespace opt {
     }
 
     void opt_solver::get_model_core(model_ref & m) {  
+        if (m_last_model.get()) {
+            m = m_last_model.get();
+            return;
+        }
+
         for (unsigned i = m_models.size(); i-- > 0; ) {
             auto* mdl = m_models[i];
             if (mdl) {
@@ -354,7 +369,7 @@ namespace opt {
         m = m_last_model.get();
     }
     
-    proof * opt_solver::get_proof() {
+    proof * opt_solver::get_proof_core() {
         return m_context.get_proof();
     }
     

@@ -46,12 +46,17 @@ add_subdirectory(math/subpaving)
 add_subdirectory(ast)
 add_subdirectory(params)
 add_subdirectory(ast/rewriter)
+add_subdirectory(ast/rewriter/bit_blaster)
 add_subdirectory(ast/normal_forms)
 add_subdirectory(ast/macros)
 add_subdirectory(model)
-add_subdirectory(tactic)
-add_subdirectory(ast/substitution)
 add_subdirectory(ast/euf)
+add_subdirectory(ast/converters)
+add_subdirectory(ast/substitution)
+add_subdirectory(ast/simplifiers)
+add_subdirectory(tactic)
+add_subdirectory(qe/mbp)
+add_subdirectory(qe/lite)
 add_subdirectory(smt/params)
 add_subdirectory(parsers/util)
 add_subdirectory(math/grobner)
@@ -67,9 +72,7 @@ add_subdirectory(cmd_context/extra_cmds)
 add_subdirectory(parsers/smt2)
 add_subdirectory(solver/assertions)
 add_subdirectory(ast/pattern)
-add_subdirectory(ast/rewriter/bit_blaster)
 add_subdirectory(math/lp)
-add_subdirectory(qe/mbp)
 add_subdirectory(sat/smt)
 add_subdirectory(sat/tactic)
 add_subdirectory(nlsat/tactic)
@@ -113,6 +116,27 @@ if (Z3_BUILD_LIBZ3_SHARED)
   set(lib_type "SHARED")
 else()
   set(lib_type "STATIC")
+endif()
+# Enable static msvc runtime.
+if (MSVC AND Z3_BUILD_LIBZ3_MSVC_STATIC)
+    set(CompilerFlags
+        CMAKE_CXX_FLAGS
+        CMAKE_CXX_FLAGS_DEBUG
+        CMAKE_CXX_FLAGS_RELEASE
+        CMAKE_CXX_FLAGS_MINSIZEREL
+        CMAKE_CXX_FLAGS_RELWITHDEBINFO
+        CMAKE_C_FLAGS
+        CMAKE_C_FLAGS_DEBUG
+        CMAKE_C_FLAGS_RELEASE
+        CMAKE_C_FLAGS_MINSIZEREL
+        CMAKE_C_FLAGS_RELWITHDEBINFO
+        )
+    foreach(CompilerFlag ${CompilerFlags})
+        string(REPLACE "/MD" "/MT" ${CompilerFlag} "${${CompilerFlag}}")
+        string(REPLACE "/MDd" "/MTd" ${CompilerFlag} "${${CompilerFlag}}")
+        set(${CompilerFlag} "${${CompilerFlag}}" CACHE STRING "msvc compiler flags" FORCE)
+        message("MSVC flags: ${CompilerFlag}:${${CompilerFlag}}")
+    endforeach()
 endif()
 add_library(libz3 ${lib_type} ${object_files})
 target_include_directories(libz3 INTERFACE
@@ -203,7 +227,7 @@ if (MSVC)
       ${Z3_GENERATED_FILE_EXTRA_DEPENDENCIES}
       ${Z3_FULL_PATH_API_HEADER_FILES_TO_SCAN}
     COMMENT "Generating \"${dll_module_exports_file}\""
-    ${ADD_CUSTOM_COMMAND_USES_TERMINAL_ARG}
+    USES_TERMINAL
     VERBATIM
   )
   add_custom_target(libz3_extra_depends

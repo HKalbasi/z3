@@ -1106,7 +1106,7 @@ namespace smt {
        \brief propagate assignment to inequality.
        This is a basic, non-optimized implementation based
        on the assumption that inequalities are mostly units
-       and/or relatively few compared to number of argumets.
+       and/or relatively few compared to number of arguments.
      */
     void theory_pb::assign_ineq(ineq& c, bool is_true) {
         m_mpz_trail.push_back(c.m_max_sum);
@@ -1486,9 +1486,9 @@ namespace smt {
     class theory_pb::pb_justification : public theory_propagation_justification {
         ineq& m_ineq;
     public:
-        pb_justification(ineq& c, family_id fid, region & r, 
+        pb_justification(ineq& c, family_id fid, context& ctx, 
                       unsigned num_lits, literal const * lits, literal consequent):
-                      theory_propagation_justification(fid, r, num_lits, lits, consequent),
+                      theory_propagation_justification(fid, ctx, num_lits, lits, consequent),
                       m_ineq(c)
                       {}
         ineq& get_ineq() { return m_ineq; }
@@ -1504,7 +1504,7 @@ namespace smt {
         SASSERT(validate_antecedents(lits));
         ctx.assign(l, ctx.mk_justification(
                        pb_justification(
-                           c, get_id(), ctx.get_region(), lits.size(), lits.data(), l)));
+                           c, get_id(), ctx, lits.size(), lits.data(), l)));
     }
     
 
@@ -1598,10 +1598,12 @@ namespace smt {
         lbool is_sat = k.check();
         validating = false;
         // std::cout << is_sat << "\n";
+#if 0
         if (is_sat == l_true) {
             std::cout << A << "\n";
             std::cout << B << "\n";
         }
+#endif
         SASSERT(is_sat != l_true);
         return true;
     }
@@ -1881,12 +1883,13 @@ namespace smt {
                 inc_coeff(conseq, offset);
                 clause& cls = *js.get_clause();
                 justification* cjs = cls.get_justification();
-                if (cjs && !is_proof_justification(*cjs)) {
-                    TRACE("pb", tout << "skipping justification for clause over: " << conseq << " " 
-                          << typeid(*cjs).name() << "\n";);
+                unsigned num_lits = cls.get_num_literals();
+                if (cjs && typeid(smt::unit_resolution_justification) == typeid(*cjs))
+                    ;
+                else if (cjs && !is_proof_justification(*cjs)) {                    
+                    TRACE("pb", tout << "not processing justification over: " << conseq << " " << typeid(*cjs).name() << "\n";);
                     break;
                 }
-                unsigned num_lits = cls.get_num_literals();
                 if (cls.get_literal(0) == conseq) {
                    process_antecedent(cls.get_literal(1), offset);
                 }
@@ -2005,7 +2008,7 @@ namespace smt {
 
         SASSERT(validate_antecedents(m_antecedents));
         TRACE("pb", tout << "assign " << m_antecedents << " ==> " << alit << "\n";);
-        ctx.assign(alit, ctx.mk_justification(theory_propagation_justification(get_id(), ctx.get_region(), m_antecedents.size(), m_antecedents.data(), alit, 0, nullptr)));
+        ctx.assign(alit, ctx.mk_justification(theory_propagation_justification(get_id(), ctx, m_antecedents.size(), m_antecedents.data(), alit, 0, nullptr)));
 
         DEBUG_CODE(
             m_antecedents.push_back(~alit);
@@ -2026,7 +2029,7 @@ namespace smt {
         literal lits[2] = { l1, l2 };
         justification* js = nullptr;
         if (proofs_enabled()) {                                         
-            js = ctx.mk_justification(theory_axiom_justification(get_id(), ctx.get_region(), 2, lits));
+            js = ctx.mk_justification(theory_axiom_justification(get_id(), ctx, 2, lits));
         }
         return js;
     }
@@ -2034,7 +2037,7 @@ namespace smt {
     justification* theory_pb::justify(literal_vector const& lits) {
         justification* js = nullptr;
         if (proofs_enabled()) {                                         
-            js = ctx.mk_justification(theory_axiom_justification(get_id(), ctx.get_region(), lits.size(), lits.data()));
+            js = ctx.mk_justification(theory_axiom_justification(get_id(), ctx, lits.size(), lits.data()));
         }
         return js;        
     }

@@ -57,7 +57,7 @@ Revision History:
 --*/
 #include "tactic/tactical.h"
 #include "ast/rewriter/th_rewriter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/expr_substitution.h"
 #include "util/dec_ref_util.h"
@@ -321,8 +321,6 @@ class recover_01_tactic : public tactic {
             SASSERT(new_goal->depth() == g->depth());
             SASSERT(new_goal->prec() == g->prec());
             new_goal->inc_depth();
-            new_goal->add(g->mc());
-            new_goal->add(g->pc());
 
             for (unsigned i = 0; i < g->size(); i++) {
                 expr * f = g->form(i);
@@ -375,7 +373,7 @@ class recover_01_tactic : public tactic {
                 new_goal->update(idx, new_curr);
             }
             result.push_back(new_goal.get());
-            TRACE("recover_01", new_goal->display(tout););
+            TRACE("recover_01", new_goal->display(tout); if (new_goal->mc()) new_goal->mc()->display(tout););
             SASSERT(new_goal->is_well_formed());
         }
         
@@ -400,14 +398,16 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "recover_01"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         th_rewriter::get_param_descrs(r);
-        r.insert("recover_01_max_bits", CPK_UINT, "(default: 10) maximum number of bits to consider in a clause.");
+        r.insert("recover_01_max_bits", CPK_UINT, "maximum number of bits to consider in a clause.", "10");
     }
 
     void operator()(goal_ref const & g, 

@@ -43,7 +43,7 @@
 #include "smt/smt_model_generator.h"
 #include "smt/arith_eq_adapter.h"
 #include "util/nat_set.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/ast_pp.h"
 #include "ast/ast_ll_pp.h"
 #include "util/cancel_eh.h"
@@ -62,11 +62,8 @@ class theory_lra::imp {
 
     struct scope {
         unsigned m_bounds_lim;
-        unsigned m_idiv_lim;
         unsigned m_asserted_qhead;            
         unsigned m_asserted_atoms_lim;
-        unsigned m_underspecified_lim;
-        expr*    m_not_handled;
     };
 
     struct delayed_atom {
@@ -161,9 +158,8 @@ class theory_lra::imp {
     svector<theory_var>                           m_definitions;     // asserted rows corresponding to definitions
 
     svector<delayed_atom>  m_asserted_atoms;        
-    expr*                  m_not_handled;
+    ptr_vector<expr>       m_not_handled;
     ptr_vector<app>        m_underspecified;
-    ptr_vector<expr>       m_idiv_terms;
     vector<ptr_vector<api_bound> > m_use_list;        // bounds where variables are used.
 
     // attributes for incremental version:
@@ -173,8 +169,8 @@ class theory_lra::imp {
     unsigned_vector        m_bounds_trail;
     unsigned               m_asserted_qhead;
 
-    svector<unsigned>       m_to_check;    // rows that should be checked for theory propagation
-
+    svector<unsigned>       m_bv_to_propagate;      // Boolean variables that can be propagated
+    
     svector<std::pair<theory_var, theory_var> >       m_assume_eq_candidates; 
     unsigned                                          m_assume_eq_head;
     lp::u_set                                         m_tmp_var_set;
@@ -233,6 +229,7 @@ class theory_lra::imp {
     resource_limit               m_resource_limit;
     lp_bounds                    m_new_bounds;
     symbol                       m_farkas;
+    vector<parameter>            m_bound_params;
     lp::lp_bound_propagator<imp> m_bp;
 
     context& ctx() const { return th.get_context(); }
@@ -276,36 +273,42 @@ class theory_lra::imp {
                 (void)_s;
                 m_nla->push();
             }
+            std::function<bool(lpvar)> is_relevant = [&](lpvar v) {
+                theory_var u = lp().local_to_external(v);
+                return ctx().is_relevant(th.get_enode(u));
+            };
+            m_nla->set_relevant(is_relevant);
             smt_params_helper prms(ctx().get_params());
-            m_nla->settings().run_order() =                   prms.arith_nl_order();
-            m_nla->settings().run_tangents() =                prms.arith_nl_tangents();
-            m_nla->settings().run_horner() =                  prms.arith_nl_horner();
-            m_nla->settings().horner_subs_fixed() =           prms.arith_nl_horner_subs_fixed();            
-            m_nla->settings().horner_frequency() =            prms.arith_nl_horner_frequency();
-            m_nla->settings().horner_row_length_limit() =     prms.arith_nl_horner_row_length_limit();
-            m_nla->settings().run_grobner() =                 prms.arith_nl_grobner();
-            m_nla->settings().run_nra()  =                    prms.arith_nl_nra();
-            m_nla->settings().grobner_subs_fixed() =          prms.arith_nl_grobner_subs_fixed();
-            m_nla->settings().grobner_eqs_growth() =          prms.arith_nl_grobner_eqs_growth();
-            m_nla->settings().grobner_expr_size_growth() =    prms.arith_nl_grobner_expr_size_growth();
-            m_nla->settings().grobner_expr_degree_growth() =  prms.arith_nl_grobner_expr_degree_growth();
-            m_nla->settings().grobner_max_simplified() =      prms.arith_nl_grobner_max_simplified();
-            m_nla->settings().grobner_number_of_conflicts_to_report() = prms.arith_nl_grobner_cnfl_to_report();
-            m_nla->settings().grobner_quota() =               prms.arith_nl_gr_q();
-            m_nla->settings().grobner_frequency() =           prms.arith_nl_grobner_frequency();
-            m_nla->settings().expensive_patching()  =         prms.arith_nl_expp();
+            m_nla->settings().run_order =                   prms.arith_nl_order();
+            m_nla->settings().run_tangents =                prms.arith_nl_tangents();
+            m_nla->settings().run_horner =                  prms.arith_nl_horner();
+            m_nla->settings().horner_subs_fixed =           prms.arith_nl_horner_subs_fixed();            
+            m_nla->settings().horner_frequency =            prms.arith_nl_horner_frequency();
+            m_nla->settings().horner_row_length_limit =     prms.arith_nl_horner_row_length_limit();
+            m_nla->settings().run_grobner =                 prms.arith_nl_grobner();
+            m_nla->settings().run_nra  =                    prms.arith_nl_nra();
+            m_nla->settings().grobner_subs_fixed =          prms.arith_nl_grobner_subs_fixed();
+            m_nla->settings().grobner_eqs_growth =          prms.arith_nl_grobner_eqs_growth();
+            m_nla->settings().grobner_expr_size_growth =    prms.arith_nl_grobner_expr_size_growth();
+            m_nla->settings().grobner_expr_degree_growth =  prms.arith_nl_grobner_expr_degree_growth();
+            m_nla->settings().grobner_max_simplified =      prms.arith_nl_grobner_max_simplified();
+            m_nla->settings().grobner_number_of_conflicts_to_report = prms.arith_nl_grobner_cnfl_to_report();
+            m_nla->settings().grobner_quota =               prms.arith_nl_gr_q();
+            m_nla->settings().grobner_frequency =           prms.arith_nl_grobner_frequency();
+            m_nla->settings().expensive_patching  =         false;
         }
     }
 
     void found_unsupported(expr* n) {
-        ctx().push_trail(value_trail<expr*>(m_not_handled));
-        TRACE("arith", tout << "unsupported " << mk_pp(n, m) << "\n";);
-        m_not_handled = n;    
-    }
+        ctx().push_trail(push_back_vector<ptr_vector<expr>>(m_not_handled));
+        TRACE("arith", tout << "unsupported " << mk_pp(n, m) << "\n");
+        m_not_handled.push_back(n);
+    } 
 
     void found_underspecified(expr* n) {
         if (a.is_underspecified(n)) {
             TRACE("arith", tout << "Unhandled: " << mk_pp(n, m) << "\n";);
+            ctx().push_trail(push_back_vector<ptr_vector<app>>(m_underspecified));
             m_underspecified.push_back(to_app(n));
         }
         expr* e = nullptr, *x = nullptr, *y = nullptr;
@@ -431,10 +434,23 @@ class theory_lra::imp {
                 }
                 else if (a.is_idiv(n, n1, n2)) {
                     if (!a.is_numeral(n2, r) || r.is_zero()) found_underspecified(n);
-                    m_idiv_terms.push_back(n);
                     app_ref mod(a.mk_mod(n1, n2), m);
                     ctx().internalize(mod, false);
                     if (ctx().relevancy()) ctx().add_relevancy_dependency(n, mod);
+                    if (m_nla && !a.is_numeral(n2)) {
+                        // shortcut to create non-linear division axioms.
+                        theory_var q = mk_var(n);
+                        theory_var x = mk_var(n1);
+                        theory_var y = mk_var(n2);
+                        m_nla->add_idivision(register_theory_var_in_lar_solver(q), register_theory_var_in_lar_solver(x), register_theory_var_in_lar_solver(y));
+                    }
+                    if (a.is_numeral(n2) && a.is_bounded(n1)) {
+                        ensure_nla();
+                        theory_var q = mk_var(n);
+                        theory_var x = mk_var(n1);
+                        theory_var y = mk_var(n2);
+                        m_nla->add_bounded_division(register_theory_var_in_lar_solver(q), register_theory_var_in_lar_solver(x), register_theory_var_in_lar_solver(y));
+                    }
                 }
                 else if (a.is_mod(n, n1, n2)) {
                     if (!a.is_numeral(n2, r) || r.is_zero()) found_underspecified(n);
@@ -453,6 +469,12 @@ class theory_lra::imp {
                 else if (a.is_idiv0(n, n1, n2) || a.is_mod0(n, n1, n2) || a.is_rem0(n, n1, n2)) {
                     st.to_ensure_var().push_back(n1);
                     st.to_ensure_var().push_back(n2);       
+                }
+                else if (a.is_power(n, n1, n2)) {                    
+                    found_unsupported(n);
+                    if (!ctx().relevancy()) mk_power_axiom(n, n1, n2);
+                    st.to_ensure_var().push_back(n1);
+                    st.to_ensure_var().push_back(n2);
                 }
                 else if (!a.is_div0(n)) {
                     found_unsupported(n);
@@ -543,7 +565,7 @@ class theory_lra::imp {
     }
 
     enode * mk_enode(app * n) {
-        TRACE("arith", tout << expr_ref(n, m) << " internalized: " << ctx().e_internalized(n) << "\n";);
+        TRACE("arith", tout << mk_bounded_pp(n, m) << " internalized: " << ctx().e_internalized(n) << "\n";);
         if (reflect(n))
             for (expr* arg : *n)
                 if (!ctx().e_internalized(arg))
@@ -607,7 +629,7 @@ class theory_lra::imp {
         return v;
     }
 
-    bool const has_int() const { return lp().has_int_var(); }
+    bool has_int() const { return lp().has_int_var(); }
     
     lpvar register_theory_var_in_lar_solver(theory_var v) {
         lpvar lpv = lp().external_to_local(v);
@@ -791,8 +813,17 @@ class theory_lra::imp {
         return internalize_linearized_def(term, st);
     }
 
+    lpvar get_lpvar(expr* e) {
+        return get_lpvar(get_enode(e));
+    }
+
+    lpvar get_lpvar(enode* n)  {
+        ensure_column(n);
+        return n ? get_lpvar(n->get_th_var(get_id())) : lp::null_lpvar;
+    }
+
     lpvar get_lpvar(theory_var v) const {
-        return lp().external_to_local(v);
+        return v == null_theory_var ? lp::null_lpvar : lp().external_to_local(v);
     }
 
     lp::tv get_tv(theory_var v) const {
@@ -807,10 +838,10 @@ class theory_lra::imp {
             return st.vars()[0];
         }
         else if (is_one(st) && a.is_numeral(term)) {
-            return get_one(a.is_int(term));
+            return lp().local_to_external(get_one(a.is_int(term)));
         }
         else if (is_zero(st) && a.is_numeral(term)) {
-            return get_zero(a.is_int(term));
+            return lp().local_to_external(get_zero(a.is_int(term)));
         }
         else {
             init_left_side(st);
@@ -856,7 +887,6 @@ public:
         m_zero_var(UINT_MAX),
         m_rone_var(UINT_MAX),
         m_rzero_var(UINT_MAX),
-        m_not_handled(nullptr),
         m_asserted_qhead(0), 
         m_assume_eq_head(0),
         m_num_conflicts(0),
@@ -870,6 +900,10 @@ public:
         m_bound_terms(m),
         m_bound_predicate(m)
     {
+        m_bound_params.push_back(parameter(m_farkas));
+        m_bound_params.push_back(parameter(rational(1)));
+        m_bound_params.push_back(parameter(rational(1)));
+
     }
         
     ~imp() {
@@ -986,7 +1020,7 @@ public:
     }
 
     void assign_eh(bool_var v, bool is_true) {
-        TRACE("arith", tout << mk_pp(ctx().bool_var2expr(v), m) << " " << (literal(v, !is_true)) << "\n";);
+        TRACE("arith", tout << mk_bounded_pp(ctx().bool_var2expr(v), m) << " " << (literal(v, !is_true)) << "\n";);
         m_asserted_atoms.push_back(delayed_atom(v, is_true));
     }
 
@@ -1031,7 +1065,7 @@ public:
     }
 
     void apply_sort_cnstr(enode* n, sort*) {
-        TRACE("arith", tout << "sort constraint: " << pp(n, m) << "\n";);
+        TRACE("arith", tout << "sort constraint: " << enode_pp(n, ctx()) << "\n";);
 #if 0
         if (!th.is_attached_to_var(n)) {
             mk_var(n->get_owner());
@@ -1045,10 +1079,7 @@ public:
         scope& sc = m_scopes.back();
         sc.m_bounds_lim = m_bounds_trail.size();
         sc.m_asserted_qhead = m_asserted_qhead;
-        sc.m_idiv_lim = m_idiv_terms.size();
         sc.m_asserted_atoms_lim = m_asserted_atoms.size();
-        sc.m_not_handled = m_not_handled;
-        sc.m_underspecified_lim = m_underspecified.size();
         lp().push();
         if (m_nla)
             m_nla->push();
@@ -1062,16 +1093,13 @@ public:
         }
         unsigned old_size = m_scopes.size() - num_scopes;
         del_bounds(m_scopes[old_size].m_bounds_lim);
-        m_idiv_terms.shrink(m_scopes[old_size].m_idiv_lim);
         m_asserted_atoms.shrink(m_scopes[old_size].m_asserted_atoms_lim);
         m_asserted_qhead = m_scopes[old_size].m_asserted_qhead;
-        m_underspecified.shrink(m_scopes[old_size].m_underspecified_lim);
-        m_not_handled = m_scopes[old_size].m_not_handled;
         m_scopes.resize(old_size);            
         lp().pop(num_scopes);
         // VERIFY(l_false != make_feasible());
         m_new_bounds.reset();
-        m_to_check.reset();
+        m_bv_to_propagate.reset();
         if (m_nla)
             m_nla->pop(num_scopes);
         TRACE("arith", tout << "num scopes: " << num_scopes << " new scope level: " << m_scopes.size() << "\n";);
@@ -1095,6 +1123,17 @@ public:
             mk_is_int_axiom(n);            
         else if (m.is_ite(n))
             mk_ite_axiom(n);
+        else if (a.is_power(n, n1, n2))
+            mk_power_axiom(n, n1, n2);
+    }
+
+    void mk_power_axiom(expr* p, expr* x, expr* y) {
+        rational r;
+        // r > 0 => r^y > 0
+        if (a.is_extended_numeral(x, r) && r > 0) {
+            expr_ref zero(a.mk_real(0), m);
+            mk_axiom(~mk_literal(a.mk_le(p, zero)));
+        }
     }
 
     //  n < 0 || rem(a, n) =  mod(a, n)
@@ -1114,7 +1153,7 @@ public:
         }
         {
             scoped_trace_stream ts(th, dgez, neg);
-            mk_axiom( dgez, neg);                    
+            mk_axiom( dgez, neg);
         }
     }
 
@@ -1225,9 +1264,8 @@ public:
             return;
         }
         expr_ref mod_r(a.mk_add(a.mk_mul(q, div), mod), m);
-
         expr_ref eq_r(th.mk_eq_atom(mod_r, p), m);
-        ctx().internalize(eq_r, false);        
+        ctx().internalize(eq_r, false);
         literal eq = ctx().get_literal(eq_r);
 
         rational k(0);
@@ -1243,6 +1281,7 @@ public:
         context& c = ctx();
         if (!k.is_zero()) {
             mk_axiom(eq);
+            m_arith_eq_adapter.mk_axioms(th.ensure_enode(mod_r), th.ensure_enode(p));
             mk_axiom(mk_literal(a.mk_ge(mod, zero)));
             mk_axiom(mk_literal(a.mk_le(mod, upper)));
             
@@ -1257,6 +1296,39 @@ public:
         }
         else {
 
+            expr_ref abs_q(m.mk_ite(a.mk_ge(q, zero), q, a.mk_uminus(q)), m);
+            expr_ref mone(a.mk_int(-1), m);
+            expr_ref modmq(a.mk_sub(mod, abs_q), m);
+            ctx().get_rewriter()(modmq);
+            literal eqz = mk_literal(m.mk_eq(q, zero));
+            literal mod_ge_0 = mk_literal(a.mk_ge(mod, zero));
+            literal mod_lt_q = mk_literal(a.mk_le(modmq, mone));
+            
+            // q = 0 or p = (p mod q) + q * (p div q)
+            // q = 0 or (p mod q) >= 0
+            // q = 0 or (p mod q) < abs(q)
+            
+            mk_axiom(eqz, eq);
+            mk_axiom(eqz, mod_ge_0);
+            mk_axiom(eqz, mod_lt_q);
+            m_arith_eq_adapter.mk_axioms(th.ensure_enode(mod_r), th.ensure_enode(p));
+
+            if (a.is_zero(p)) {
+                mk_axiom(eqz, mk_literal(m.mk_eq(div, zero)));
+                mk_axiom(eqz, mk_literal(m.mk_eq(mod, zero)));
+            }
+            // (or (= y 0)  (<= (* y (div x y)) x))
+            else if (!a.is_numeral(q)) {
+                expr_ref div_ge(m);
+                div_ge = a.mk_ge(a.mk_sub(p, a.mk_mul(q, div)), zero);
+                ctx().get_rewriter()(div_ge);
+                mk_axiom(eqz, mk_literal(div_ge));
+                TRACE("arith", tout << eqz << " " << div_ge << "\n");
+            }
+
+
+#if 0
+            
             /*literal div_ge_0   = */ mk_literal(a.mk_ge(div, zero));
             /*literal div_le_0   = */ mk_literal(a.mk_le(div, zero));
             /*literal p_ge_0     = */ mk_literal(a.mk_ge(p, zero));
@@ -1267,7 +1339,7 @@ public:
             // q >= 0 or (p mod q) >= 0
             // q <= 0 or (p mod q) >= 0
             // q <= 0 or (p mod q) <  q
-            // q >= 0 or (p mod q) < -q
+            // q >= 0 or (p mod q) < -q            
             literal q_ge_0 = mk_literal(a.mk_ge(q, zero));
             literal q_le_0 = mk_literal(a.mk_le(q, zero));
             literal mod_ge_0 = mk_literal(a.mk_ge(mod, zero));
@@ -1278,11 +1350,11 @@ public:
             mk_axiom(q_le_0, mod_ge_0);
             mk_axiom(q_le_0, ~mk_literal(a.mk_ge(a.mk_sub(mod, q), zero)));            
             mk_axiom(q_ge_0, ~mk_literal(a.mk_ge(a.mk_add(mod, q), zero)));        
-
+#endif
 
 #if 0
             // seem expensive
-
+            
             mk_axiom(q_le_0, ~p_ge_0, div_ge_0); 
             mk_axiom(q_le_0, ~p_le_0, div_le_0); 
             mk_axiom(q_ge_0, ~p_ge_0, div_le_0);             
@@ -1294,19 +1366,21 @@ public:
             mk_axiom(q_ge_0, p_le_0, ~div_ge_0);
 #endif
  
+#if 0
             std::function<void(void)> log = [&,this]() {
                 th.log_axiom_unit(m.mk_implies(m.mk_not(m.mk_eq(q, zero)), c.bool_var2expr(eq.var()))); 
                 th.log_axiom_unit(m.mk_implies(m.mk_not(m.mk_eq(q, zero)), c.bool_var2expr(mod_ge_0.var()))); 
                 th.log_axiom_unit(m.mk_implies(a.mk_lt(q, zero), a.mk_lt(a.mk_sub(mod, q), zero)));
                 th.log_axiom_unit(m.mk_implies(a.mk_lt(q, zero), a.mk_lt(a.mk_add(mod, q), zero)));
+            };
+            if_trace_stream _ts(m, log);
+#endif
 #if 0
                 th.log_axiom_unit(m.mk_implies(m.mk_and(a.mk_gt(q, zero), c.bool_var2expr(p_ge_0.var())), c.bool_var2expr(div_ge_0.var())));
                 th.log_axiom_unit(m.mk_implies(m.mk_and(a.mk_gt(q, zero), c.bool_var2expr(p_le_0.var())), c.bool_var2expr(div_le_0.var())));
                 th.log_axiom_unit(m.mk_implies(m.mk_and(a.mk_lt(q, zero), c.bool_var2expr(p_ge_0.var())), c.bool_var2expr(div_le_0.var())));
                 th.log_axiom_unit(m.mk_implies(m.mk_and(a.mk_lt(q, zero), c.bool_var2expr(p_le_0.var())), c.bool_var2expr(div_ge_0.var())));
 #endif
-            };
-            if_trace_stream _ts(m, log);
         }
         if (params().m_arith_enum_const_mod && k.is_pos() && k < rational(8)) {
             unsigned _k = k.get_unsigned();
@@ -1374,10 +1448,13 @@ public:
         return v != null_theory_var && lp().external_is_used(v);
     }
 
+    void ensure_column(enode* n) {
+        ensure_column(n->get_th_var(get_id()));
+    }
+
     void ensure_column(theory_var v) {
-        if (!lp().external_is_used(v)) {
+        if (!lp().external_is_used(v) && v != null_theory_var) 
             register_theory_var_in_lar_solver(v);
-        }
     }
 
     mutable vector<std::pair<lp::tv, rational>> m_todo_terms;
@@ -1403,7 +1480,7 @@ public:
     }
     
     void random_update() {
-        if (m_nla)
+        if (m_nla && m_nla->need_check())
             return;
         m_tmp_var_set.clear();
         m_tmp_var_set.resize(th.get_num_vars());
@@ -1481,7 +1558,7 @@ public:
         }
             
         if (num_candidates > 0) {
-            ctx().push_trail(restore_size_trail<std::pair<theory_var, theory_var>, false>(m_assume_eq_candidates, old_sz));
+            ctx().push_trail(restore_vector(m_assume_eq_candidates, old_sz));
         }
 
         return delayed_assume_eqs();
@@ -1493,50 +1570,74 @@ public:
             
         ctx().push_trail(value_trail<unsigned>(m_assume_eq_head));
         while (m_assume_eq_head < m_assume_eq_candidates.size()) {
-            std::pair<theory_var, theory_var> const & p = m_assume_eq_candidates[m_assume_eq_head];
-            theory_var v1 = p.first;
-            theory_var v2 = p.second;
+            auto const [v1, v2] = m_assume_eq_candidates[m_assume_eq_head];
             enode* n1 = get_enode(v1);
             enode* n2 = get_enode(v2);
             m_assume_eq_head++;
             CTRACE("arith", 
                    is_eq(v1, v2) && n1->get_root() != n2->get_root(),
                    tout << "assuming eq: v" << v1 << " = v" << v2 << "\n";);
-            if (is_eq(v1, v2) &&  n1->get_root() != n2->get_root() && th.assume_eq(n1, n2)) {
+            if (is_eq(v1, v2) &&  n1->get_root() != n2->get_root() && th.assume_eq(n1, n2)) 
                 return true;
-            }
         }
         return false;
     }
 
     bool is_eq(theory_var v1, theory_var v2) {
-        if (use_nra_model()) {
+        if (use_nra_model()) 
             return m_nla->am().eq(nl_value(v1, *m_a1), nl_value(v2, *m_a2));
-        }
-        else {
+        else 
             return get_ivalue(v1) == get_ivalue(v2); 
-        }
     }
 
     bool has_delayed_constraints() const {
         return !m_asserted_atoms.empty();
     }
 
+    final_check_status eval_power(expr* e) {
+        expr* x, * y;
+        rational r;
+        VERIFY(a.is_power(e, x, y));
+        if (a.is_numeral(x, r) && r == 0 && a.is_numeral(y, r) && r == 0)
+            return FC_DONE;
+        if (!m_nla)
+            return FC_GIVEUP;
+        switch (m_nla->check_power(get_lpvar(e), get_lpvar(x), get_lpvar(y), m_nla_lemma_vector)) {
+        case l_true:
+            return FC_DONE;
+        case l_false:
+            for (const nla::lemma & l : m_nla_lemma_vector) 
+                false_case_of_check_nla(l);
+            return FC_CONTINUE;
+        case l_undef:
+            return FC_GIVEUP;
+        default:
+            break;
+        }
+        return FC_GIVEUP;
+    }
+
+    final_check_status eval_unsupported(expr* e) {
+        if (a.is_power(e)) 
+            return eval_power(e);        
+        return FC_GIVEUP;
+    }
+
     final_check_status final_check_eh() {
+        if (propagate_core())
+            return FC_CONTINUE;
         m_model_is_initialized = false;
         IF_VERBOSE(12, verbose_stream() << "final-check " << lp().get_status() << "\n");
         lbool is_sat = l_true;
         SASSERT(lp().ax_is_correct());
-        if (lp().get_status() != lp::lp_status::OPTIMAL || lp().has_changed_columns()) {
+        if (!lp().is_feasible() || lp().has_changed_columns()) {
             is_sat = make_feasible();
         }
         final_check_status st = FC_DONE;
 
         switch (is_sat) {
         case l_true:
-            TRACE("arith", display(tout);
-                  /* ctx().display(tout);*/
-                  );
+            TRACE("arith", display(tout));
 
             switch (check_lia()) {
             case l_true:
@@ -1545,6 +1646,8 @@ public:
                 return FC_CONTINUE;
             case l_undef:
                 TRACE("arith", tout << "check-lia giveup\n";);
+                if (ctx().get_fparams().m_arith_ignore_int)
+                    return FC_GIVEUP;
                 st = FC_CONTINUE;
                 break;
             }
@@ -1567,11 +1670,25 @@ public:
             if (assume_eqs()) {
                 ++m_stats.m_assume_eqs;
                 return FC_CONTINUE;
-            }    
-            if (m_not_handled != nullptr) {
-                TRACE("arith", tout << "unhandled operator " << mk_pp(m_not_handled, m) << "\n";);        
-                st = FC_GIVEUP;
-            }                
+            }
+            for (expr* e : m_not_handled) {
+                if (!ctx().is_relevant(e))
+                    continue;
+                st = FC_DONE;
+                switch (eval_unsupported(e)) {
+                case FC_CONTINUE:
+                    st = FC_CONTINUE;
+                    break;
+                case FC_GIVEUP:
+                    if (st != FC_CONTINUE) 
+                        st = FC_GIVEUP;
+                    break;
+                default:
+                    break;
+                }
+                if (st == FC_CONTINUE)
+                    break;
+            }
             return st;
         case l_false:
             get_infeasibility_explanation_and_set_conflict();
@@ -1686,87 +1803,13 @@ public:
      */
 
     bool check_idiv_bounds() {
-        if (m_idiv_terms.empty()) {
+        if (!m_nla)
             return true;
-        }
-        bool all_divs_valid = true; 
-        for (unsigned i = 0; i < m_idiv_terms.size(); ++i) {
-            expr* n = m_idiv_terms[i];
-            expr* p = nullptr, *q = nullptr;
-            VERIFY(a.is_idiv(n, p, q));
-            theory_var v = internalize_def(to_app(n));
-            theory_var v1 = internalize_def(to_app(p));
-
-            if (!is_registered_var(v1))
-                continue;
-            lp::impq r1 = get_ivalue(v1);
-            rational r2;
-
-            if (!r1.x.is_int() || r1.x.is_neg() || !r1.y.is_zero()) {
-                // TBD
-                // r1 = 223/4, r2 = 2, r = 219/8 
-                // take ceil(r1), floor(r1), ceil(r2), floor(r2), for floor(r2) > 0
-                // then 
-                //      p/q <= ceil(r1)/floor(r2) => n <= div(ceil(r1), floor(r2))
-                //      p/q >= floor(r1)/ceil(r2) => n >= div(floor(r1), ceil(r2))
-                continue;
-            }
-
-            if (a.is_numeral(q, r2) && r2.is_pos()) {
-                if (!a.is_bounded(n)) {
-                    TRACE("arith", tout << "unbounded " << expr_ref(n, m) << "\n";);
-                    continue;
-                }
-                if (!is_registered_var(v))
-                    continue;
-                lp::impq val_v = get_ivalue(v);
-                if (val_v.y.is_zero() && val_v.x == div(r1.x, r2)) continue;
-            
-                TRACE("arith", tout << get_value(v) << " != " << r1 << " div " << r2 << "\n";);
-                rational div_r = div(r1.x, r2);
-                // p <= q * div(r1, q) + q - 1 => div(p, q) <= div(r1, r2)
-                // p >= q * div(r1, q) => div(r1, q) <= div(p, q)
-                rational mul(1);
-                rational hi = r2 * div_r + r2 - 1;
-                rational lo = r2 * div_r;
-
-                // used to normalize inequalities so they 
-                // don't appear as 8*x >= 15, but x >= 2
-                expr *n1 = nullptr, *n2 = nullptr;
-                if (a.is_mul(p, n1, n2) && a.is_extended_numeral(n1, mul) && mul.is_pos()) {
-                    p = n2;
-                    hi = floor(hi/mul);
-                    lo = ceil(lo/mul);
-                }
-                literal p_le_r1  = mk_literal(a.mk_le(p, a.mk_numeral(hi, true)));
-                literal p_ge_r1  = mk_literal(a.mk_ge(p, a.mk_numeral(lo, true)));
-                literal n_le_div = mk_literal(a.mk_le(n, a.mk_numeral(div_r, true)));
-                literal n_ge_div = mk_literal(a.mk_ge(n, a.mk_numeral(div_r, true)));
-                {
-                    scoped_trace_stream _sts(th, ~p_le_r1, n_le_div);
-                    mk_axiom(~p_le_r1, n_le_div);
-                }
-                {
-                    scoped_trace_stream _sts(th, ~p_ge_r1, n_ge_div);
-                    mk_axiom(~p_ge_r1, n_ge_div);
-                }
-
-                all_divs_valid = false;
-
-                TRACE("arith",
-                      tout << r1 << " div " << r2 << "\n";
-                      literal_vector lits;
-                      lits.push_back(~p_le_r1);
-                      lits.push_back(n_le_div);
-                      ctx().display_literals_verbose(tout, lits) << "\n\n";
-                      lits[0] = ~p_ge_r1;
-                      lits[1] = n_ge_div;
-                      ctx().display_literals_verbose(tout, lits) << "\n";);                      
-                continue;
-            }
-        }
-        
-        return all_divs_valid;
+        m_nla_lemma_vector.reset();
+        m_nla->check_bounded_divisions(m_nla_lemma_vector);
+        for (auto & lemma : m_nla_lemma_vector)
+            false_case_of_check_nla(lemma);
+        return m_nla_lemma_vector.empty();         
     }
 
     expr_ref var2expr(lpvar v) {
@@ -1863,10 +1906,11 @@ public:
             return l_undef;
         }
         lbool lia_check = l_undef;
-        if (!check_idiv_bounds()) {
-            return l_false;
-        }
-        switch (m_lia->check(&m_explanation)) {
+        auto cr = m_lia->check(&m_explanation);
+        if (cr != lp::lia_move::sat && ctx().get_fparams().m_arith_ignore_int) 
+            return l_undef;
+
+        switch (cr) {
         case lp::lia_move::sat:
             lia_check = l_true;
             break;
@@ -1896,6 +1940,8 @@ public:
             break;
         }
         case lp::lia_move::cut: {
+            if (ctx().get_fparams().m_arith_ignore_int) 
+                return l_undef;
             TRACE("arith", tout << "cut\n";);
             ++m_stats.m_gomory_cuts;
             // m_explanation implies term <= k
@@ -1935,6 +1981,9 @@ public:
         default:
             UNREACHABLE();
         }
+        if (lia_check != l_false && !check_idiv_bounds()) 
+            return l_false;
+
         return lia_check;
     }
 
@@ -1977,9 +2026,8 @@ public:
         lbool r = m_nla->check(m_nla_lemma_vector);
         switch (r) {
         case l_false: {
-            for (const nla::lemma & l : m_nla_lemma_vector) {
-                false_case_of_check_nla(l);
-            }
+            for (const nla::lemma & l : m_nla_lemma_vector) 
+                false_case_of_check_nla(l);            
             break;
         }
         case l_true:
@@ -1998,11 +2046,11 @@ public:
             TRACE("arith", tout << "canceled\n";);
             return l_undef;
         }
-        if (!m_nla) {
-            TRACE("arith", tout << "no nla\n";);
+        CTRACE("arith",!m_nla, tout << "no nla\n";);
+        if (!m_nla)            
+            return l_true;        
+        if (!m_nla->need_check()) 
             return l_true;
-        }
-        if (!m_nla->need_check()) return l_true;
         return check_nla_continue();
     }
 
@@ -2020,9 +2068,8 @@ public:
        Use the set to determine if a variable is shared.
     */
     bool is_shared(theory_var v) const {
-        if (m_underspecified.empty()) {
+        if (m_underspecified.empty()) 
             return false;
-        }
         enode * n      = get_enode(v);
         enode * r      = n->get_root();
         unsigned usz   = m_underspecified.size();
@@ -2031,58 +2078,72 @@ public:
             for (unsigned i = 0; i < usz; ++i) {
                 app* u = m_underspecified[i];
                 unsigned sz = u->get_num_args();
-                for (unsigned j = 0; j < sz; ++j) {
-                    if (ctx().get_enode(u->get_arg(j))->get_root() == r) {
+                for (unsigned j = 0; j < sz; ++j) 
+                    if (ctx().get_enode(u->get_arg(j))->get_root() == r) 
                         return true;
-                    }
-                }
             }
         }
         else {
-            for (enode * parent : r->get_const_parents()) {
-                if (a.is_underspecified(parent->get_expr())) {
+            for (enode * parent : r->get_const_parents()) 
+                if (a.is_underspecified(parent->get_expr())) 
                     return true;
-                }
-            }
         }
         return false;
     }
 
-    bool m_new_def{ false };
+    bool m_new_def = false ;
+
+    bool adaptive() const { return ctx().get_fparams().m_arith_adaptive; }
+    double adaptive_assertion_threshold() const { return ctx().get_fparams().m_arith_adaptive_assertion_threshold; }
+
+    bool process_atoms() const {
+        if (!adaptive())
+            return true;
+        unsigned total_conflicts = ctx().get_num_conflicts();
+        if (total_conflicts < 10)
+            return true;
+        double f = static_cast<double>(m_num_conflicts)/static_cast<double>(total_conflicts);
+        return f >= adaptive_assertion_threshold();
+    }
 
     bool can_propagate() {
+        return process_atoms() && can_propagate_core();
+    }
+    
+    bool can_propagate_core() {
         return m_asserted_atoms.size() > m_asserted_qhead || m_new_def;
     }
 
-    void propagate() {
+    bool propagate() {
+        return process_atoms() && propagate_core();        
+    }
+
+    bool propagate_core() {
         m_model_is_initialized = false;
         flush_bound_axioms();
-        if (!can_propagate()) {
-            return;
-        }
-        m_new_def = false;
+        if (!can_propagate_core())
+            return false;
+        m_new_def = false;        
         while (m_asserted_qhead < m_asserted_atoms.size() && !ctx().inconsistent() && m.inc()) {
-            bool_var bv = m_asserted_atoms[m_asserted_qhead].m_bv;
-            bool is_true = m_asserted_atoms[m_asserted_qhead].m_is_true;
-            m_to_check.push_back(bv);
+            auto [bv, is_true] = m_asserted_atoms[m_asserted_qhead];
+            
+            // m_bv_to_propagate.push_back(bv);
+            
             api_bound* b = nullptr;
-            TRACE("arith", tout << "propagate: " << literal(bv, !is_true) << "\n";);
-            if (m_bool_var2bound.find(bv, b)) {
+            TRACE("arith", tout << "propagate: " << literal(bv, !is_true) << "\n";
+                  if (!m_bool_var2bound.contains(bv)) tout << "not found\n");
+            if (m_bool_var2bound.find(bv, b)) 
                 assert_bound(bv, is_true, *b);
-            }
-            else {
-                TRACE("arith", tout << "not found " << bv << "\n";);
-            }
             ++m_asserted_qhead;
         }
         if (ctx().inconsistent()) {
-            m_to_check.reset();
-            return;
+            m_bv_to_propagate.reset();
+            return true;
         }
 
         lbool lbl = make_feasible();
         if (!m.inc())
-            return;
+            return false;
         
         switch(lbl) {
         case l_false:
@@ -2096,7 +2157,7 @@ public:
         case l_undef:
             break;
         }
-            
+        return true;            
     }
 
     bool should_propagate() const {
@@ -2246,32 +2307,33 @@ public:
         assign(bound, m_core, m_eqs, m_params);              
     }
 
-    void add_eq(lpvar u, lpvar v, lp::explanation const& e) {
+    bool add_eq(lpvar u, lpvar v, lp::explanation const& e, bool is_fixed) {
         if (ctx().inconsistent())
-            return;
+            return false;
         theory_var uv = lp().local_to_external(u); // variables that are returned should have external representations
         theory_var vv = lp().local_to_external(v); // so maybe better to have them already transformed to external form
         enode* n1 = get_enode(uv);
         enode* n2 = get_enode(vv);
+
         TRACE("arith", tout << "add-eq " << mk_pp(n1->get_expr(), m) << " == " << mk_pp(n2->get_expr(), m) << " " << n1->get_expr_id() << " == " << n2->get_expr_id() << "\n";);
         if (n1->get_root() == n2->get_root())
-            return;
+            return false;
         expr* e1 = n1->get_expr();
         expr* e2 = n2->get_expr();
         if (e1->get_sort() != e2->get_sort())
-            return;
-        if (m.is_ite(e1) || m.is_ite(e2))
-            return;
+            return false;
+        if (!is_fixed && !a.is_numeral(e1) && !a.is_numeral(e2) && (m.is_ite(e1) || m.is_ite(e2))) 
+            return false;
         reset_evidence();
         for (auto ev : e) 
             set_evidence(ev.ci(), m_core, m_eqs);
         assign_eq(uv, vv);
+        return true;
     }
 
     literal_vector m_core2;
 
     void assign(literal lit, literal_vector const& core, svector<enode_pair> const& eqs, vector<parameter> const& params) {
-        dump_assign(lit, core, eqs);
         if (core.size() < small_lemma_size() && eqs.empty()) {
             m_core2.reset();
             for (auto const& c : core) {
@@ -2289,7 +2351,7 @@ public:
             ctx().assign(
                 lit, ctx().mk_justification(
                     ext_theory_propagation_justification(
-                        get_id(), ctx().get_region(), core.size(), core.data(), 
+                        get_id(), ctx(), core.size(), core.data(), 
                         eqs.size(), eqs.data(), lit, params.size(), params.data())));            
         }
     }
@@ -2440,6 +2502,7 @@ public:
     typedef lp_bounds::iterator iterator;
 
     void flush_bound_axioms() {
+        
         CTRACE("arith", !m_new_bounds.empty(), tout << "flush bound axioms\n";);
 
         while (!m_new_bounds.empty()) {
@@ -2458,7 +2521,7 @@ public:
             CTRACE("arith", atoms.size() > 1, 
                    for (auto* a : atoms) a->display(tout) << "\n";);
             lp_bounds occs(m_bounds[v]);
-                
+            
             std::sort(atoms.begin(), atoms.end(), compare_bounds());
             std::sort(occs.begin(), occs.end(), compare_bounds());
                 
@@ -2558,14 +2621,15 @@ public:
     }
 
     void propagate_basic_bounds() {
-        for (auto const& bv : m_to_check) {
+        for (auto const& bv : m_bv_to_propagate) {
             api_bound* b = nullptr;
             if (m_bool_var2bound.find(bv, b)) {
                 propagate_bound(bv, ctx().get_assignment(bv) == l_true, *b);
-                if (ctx().inconsistent()) break;
+                if (ctx().inconsistent())
+                    break;
             }
         }
-        m_to_check.reset();
+        m_bv_to_propagate.reset();
     }
         
     // for glb lo': lo' < lo:
@@ -2633,10 +2697,7 @@ public:
               ctx().display_literals_verbose(tout, m_core);
               ctx().display_literal_verbose(tout << " => ", lit2);
               tout << "\n";);
-        m_params.push_back(parameter(m_farkas));
-        m_params.push_back(parameter(rational(1)));
-        m_params.push_back(parameter(rational(1)));
-        assign(lit2, m_core, m_eqs, m_params);
+        assign(lit2, m_core, m_eqs, m_bound_params);
         ++m_stats.m_bounds_propagations;
     }
 
@@ -2883,8 +2944,6 @@ public:
     }
 
 
-    bool dump_lemmas() const { return params().m_arith_dump_lemmas; }
-
     bool propagate_eqs() const { return params().m_arith_propagate_eqs && m_num_conflicts < params().m_arith_propagation_threshold; }
 
     bound_prop_mode propagation_mode() const { return m_num_conflicts < params().m_arith_propagation_threshold ? params().m_arith_bound_prop : bound_prop_mode::BP_NONE; }
@@ -3020,7 +3079,7 @@ public:
         justification* js = 
             ctx().mk_justification(
                 ext_theory_eq_propagation_justification(
-                    get_id(), ctx().get_region(), m_core.size(), m_core.data(), m_eqs.size(), m_eqs.data(), x, y));
+                    get_id(), ctx(), m_core.size(), m_core.data(), m_eqs.size(), m_eqs.data(), x, y));
         
         TRACE("arith",
               for (auto c : m_core) 
@@ -3064,21 +3123,14 @@ public:
         TRACE("pcs",  tout << lp().constraints(););
         auto status = lp().find_feasible_solution();
         TRACE("arith_verbose", display(tout););
-        switch (status) {
-        case lp::lp_status::INFEASIBLE:
-            return l_false;
-        case lp::lp_status::FEASIBLE:
-        case lp::lp_status::OPTIMAL:
-            //            SASSERT(lp().all_constraints_hold());
+        if (lp().is_feasible())
             return l_true;
-        case lp::lp_status::TIME_EXHAUSTED:
-                
-        default:
-            TRACE("arith", tout << "status treated as inconclusive: " << status << "\n";);
+        if (status == lp::lp_status::INFEASIBLE)  
+            return l_false;
+        TRACE("arith", tout << "status treated as inconclusive: " << status << "\n";);
             // TENTATIVE_UNBOUNDED, UNBOUNDED, TENTATIVE_DUAL_UNBOUNDED, DUAL_UNBOUNDED, 
-            // FLOATING_POINT_ERROR, TIME_EXAUSTED, ITERATIONS_EXHAUSTED, EMPTY, UNSTABLE
-            return l_undef;
-        }
+            // FLOATING_POINT_ERROR, TIME_EXAUSTED, EMPTY, UNSTABLE
+        return l_undef;
     }
  
     lp::explanation     m_explanation;
@@ -3141,18 +3193,21 @@ public:
         // lp().shrink_explanation_to_minimum(m_explanation); // todo, enable when perf is fixed
         ++m_num_conflicts;
         ++m_stats.m_conflicts;
-        TRACE("arith", tout << "scope: " << ctx().get_scope_level() << "\n"; display_evidence(tout, m_explanation); );
-        TRACE("arith", display(tout << "is-conflict: " << is_conflict << "\n"););
-        for (auto ev : m_explanation) {
+        TRACE("arith",
+              tout << "lemma scope: " << ctx().get_scope_level();
+              for (auto const& p : m_params) tout << " " << p;
+              tout << "\n";
+              display_evidence(tout, m_explanation);
+              display(tout << "is-conflict: " << is_conflict << "\n"););
+        for (auto ev : m_explanation) 
             set_evidence(ev.ci(), m_core, m_eqs);
-        }
+        
         // SASSERT(validate_conflict(m_core, m_eqs));
-        dump_conflict(m_core, m_eqs);
         if (is_conflict) {
             ctx().set_conflict(
                 ctx().mk_justification(
                     ext_theory_conflict_justification(
-                        get_id(), ctx().get_region(), 
+                        get_id(), ctx(),  
                         m_core.size(), m_core.data(), 
                         m_eqs.size(), m_eqs.data(), m_params.size(), m_params.data())));
         }
@@ -3187,14 +3242,14 @@ public:
         m_arith_eq_adapter.reset_eh();
         m_solver = nullptr;
         m_internalize_head = 0;
-        m_not_handled = nullptr;
+        m_not_handled.reset();
         del_bounds(0);
         m_unassigned_bounds.reset();
         m_asserted_qhead  = 0;
         m_assume_eq_head = 0;
         m_scopes.reset();
         m_stats.reset();
-        m_to_check.reset();
+        m_bv_to_propagate.reset();
         m_model_is_initialized = false;
     }
 
@@ -3358,11 +3413,6 @@ public:
         }
     };
 
-    void dump_conflict(literal_vector const& core, svector<enode_pair> const& eqs) {
-        if (dump_lemmas()) {
-            ctx().display_lemma_as_smt_problem(core.size(), core.data(), eqs.size(), eqs.data(), false_literal);
-        }
-    }
 
     bool validate_conflict(literal_vector const& core, svector<enode_pair> const& eqs) {
         if (params().m_arith_mode != arith_solver_id::AS_NEW_ARITH) return true;
@@ -3374,13 +3424,6 @@ public:
         bool result = l_true != nctx.check();
         CTRACE("arith", !result, ctx().display_lemma_as_smt_problem(tout, core.size(), core.data(), eqs.size(), eqs.data(), false_literal););
         return result;
-    }
-
-    void dump_assign(literal lit, literal_vector const& core, svector<enode_pair> const& eqs) {
-        if (dump_lemmas()) {                
-            unsigned id = ctx().display_lemma_as_smt_problem(core.size(), core.data(), eqs.size(), eqs.data(), lit);
-            (void)id;
-        }
     }
 
     bool validate_assign(literal lit, literal_vector const& core, svector<enode_pair> const& eqs) {
@@ -3448,7 +3491,7 @@ public:
             st = lp::lp_status::UNBOUNDED;
         }
         else {
-            if (lp().get_status() != lp::lp_status::OPTIMAL || lp().has_changed_columns()) 
+            if (!lp().is_feasible() || lp().has_changed_columns())
                 make_feasible();
             
             vi = get_lpvar(v);
@@ -3458,22 +3501,24 @@ public:
                 st = lp::lp_status::FEASIBLE;
                 lp().restore_x();
             }
-                
+            if (m_nla && (st == lp::lp_status::OPTIMAL || st == lp::lp_status::UNBOUNDED)) {
+                st = lp::lp_status::FEASIBLE;
+                lp().restore_x();
+            }                
         }
         switch (st) {
         case lp::lp_status::OPTIMAL: {
             init_variable_values();
             TRACE("arith", display(tout << st << " v" << v << " vi: " << vi << "\n"););
-            inf_rational val = get_value(v);
-            // inf_rational val(term_max.x, term_max.y);
+            auto val = value(v);
             blocker = mk_gt(v);
-            return inf_eps(rational::zero(), val);
+            return val;
         }
         case lp::lp_status::FEASIBLE: {
-            inf_rational val = get_value(v);
+            auto val = value(v);
             TRACE("arith", display(tout << st << " v" << v << " vi: " << vi << "\n"););
             blocker = mk_gt(v);
-            return inf_eps(rational::zero(), val);
+            return val;
         }
         default:
             SASSERT(st == lp::lp_status::UNBOUNDED);
@@ -3490,23 +3535,19 @@ public:
         rational r = val.x;
         expr_ref e(m);
         if (a.is_int(obj->get_sort())) {
-            if (r.is_int()) {
+            if (r.is_int()) 
                 r += rational::one();
-            }
-            else {
+            else 
                 r = ceil(r);
-            }
             e = a.mk_numeral(r, obj->get_sort());
             e = a.mk_ge(obj, e);
         }
         else {
             e = a.mk_numeral(r, obj->get_sort());
-            if (val.y.is_neg()) {
+            if (val.y.is_neg()) 
                 e = a.mk_ge(obj, e);
-            }
-            else {
+            else 
                 e = a.mk_gt(obj, e);
-            }
         }
         TRACE("opt", tout << "v" << v << " " << val << " " << r << " " << e << "\n";);
         return e;
@@ -3661,7 +3702,7 @@ public:
             else if (can_get_value(v)) out << " = " << get_value(v); 
             if (is_int(v)) out << ", int";
             if (ctx().is_shared(get_enode(v))) out << ", shared";
-            out << " := "; th.display_var_flat_def(out, v) << "\n";
+            out << " := " << enode_pp(get_enode(v), ctx()) << "\n";
         }
     }
 

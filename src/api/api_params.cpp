@@ -17,7 +17,6 @@ Author:
 Revision History:
 
 --*/
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -54,7 +53,6 @@ extern "C" {
     void Z3_API Z3_params_dec_ref(Z3_context c, Z3_params p) {
         Z3_TRY;
         LOG_Z3_params_dec_ref(c, p);
-        RESET_ERROR_CODE();
         if (p)
             to_params(p)->dec_ref();
         Z3_CATCH;
@@ -118,7 +116,7 @@ extern "C" {
         RESET_ERROR_CODE();
         std::ostringstream buffer;
         to_params(p)->m_params.display(buffer);
-        return mk_c(c)->mk_external_string(buffer.str());
+        return mk_c(c)->mk_external_string(std::move(buffer).str());
         Z3_CATCH_RETURN("");
     }
 
@@ -141,8 +139,8 @@ extern "C" {
     void Z3_API Z3_param_descrs_dec_ref(Z3_context c, Z3_param_descrs p) {
         Z3_TRY;
         LOG_Z3_param_descrs_dec_ref(c, p);
-        RESET_ERROR_CODE();
-        to_param_descrs(p)->dec_ref();
+        if (p) 
+            to_param_descrs(p)->dec_ref();
         Z3_CATCH;
     }
 
@@ -210,7 +208,7 @@ extern "C" {
             buffer << to_param_descrs_ptr(p)->get_param_name(i);
         }
         buffer << ")";
-        return mk_c(c)->mk_external_string(buffer.str());
+        return mk_c(c)->mk_external_string(std::move(buffer).str());
         Z3_CATCH_RETURN("");
     }
 

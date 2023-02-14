@@ -21,9 +21,8 @@ Author:
 
 namespace euf {
 
-    bool th_internalizer::visit_rec(ast_manager& m, expr* a, bool sign, bool root, bool redundant) {
+    bool th_internalizer::visit_rec(ast_manager& m, expr* a, bool sign, bool root) {
         IF_VERBOSE(110, verbose_stream() << "internalize: " << mk_pp(a, m) << "\n");
-        flet<bool> _is_learned(m_is_redundant, redundant);
         svector<sat::eframe>::scoped_stack _sc(m_stack);
         unsigned sz = m_stack.size();
         visit(a);
@@ -101,6 +100,11 @@ namespace euf {
     theory_var th_euf_solver::get_th_var(expr* e) const {
         return get_th_var(ctx.get_enode(e));
     }
+
+    theory_var th_euf_solver::get_representative(theory_var v) const {
+        euf::enode* r = var2enode(v)->get_root();
+        return get_th_var(r);
+    }
     
     void th_euf_solver::push_core() {
         m_var2enode_lim.push_back(m_var2enode.size());
@@ -120,13 +124,12 @@ namespace euf {
             pop_core(n);        
     }
 
-    sat::status th_euf_solver::mk_status() {
-        return sat::status::th(m_is_redundant, get_id());
-    }
-
-    bool th_euf_solver::add_unit(sat::literal lit) {
+    bool th_euf_solver::add_unit(sat::literal lit, th_proof_hint const* ps) {
+        if (ctx.use_drat() && !ps)
+            ps = ctx.mk_smt_clause(name(), 1, &lit);
         bool was_true = is_true(lit);
-        ctx.s().add_clause(1, &lit, mk_status());
+        ctx.s().add_clause(1, &lit, sat::status::th(false, get_id(), ps));
+        ctx.add_root(lit);
         return !was_true;
     }
 
@@ -137,33 +140,31 @@ namespace euf {
                 is_new = true;
         return is_new;
     }
-
-    bool th_euf_solver::add_clause(sat::literal a, sat::literal b) {
-        bool was_true = is_true(a, b);
+    
+    bool th_euf_solver::add_clause(sat::literal a, sat::literal b, th_proof_hint const* ph) {
         sat::literal lits[2] = { a, b };
-        ctx.s().add_clause(2, lits, mk_status());
-        return !was_true;
+        return add_clause(2, lits, ph);
     }
 
-    bool th_euf_solver::add_clause(sat::literal a, sat::literal b, sat::literal c) {
-        bool was_true = is_true(a, b, c);
+    bool th_euf_solver::add_clause(sat::literal a, sat::literal b, sat::literal c, th_proof_hint const* ps) {
         sat::literal lits[3] = { a, b, c };
-        ctx.s().add_clause(3, lits, mk_status());
-        return !was_true;
+        return add_clause(3, lits, ps);
     }
 
-    bool th_euf_solver::add_clause(sat::literal a, sat::literal b, sat::literal c, sat::literal d) {
-        bool was_true = is_true(a, b, c, d);
+    bool th_euf_solver::add_clause(sat::literal a, sat::literal b, sat::literal c, sat::literal d, th_proof_hint const* ps) {
         sat::literal lits[4] = { a, b, c, d };
-        ctx.s().add_clause(4, lits, mk_status());
-        return !was_true;
+        return add_clause(4, lits, ps);
     }
 
-    bool th_euf_solver::add_clause(sat::literal_vector const& lits) {
+    bool th_euf_solver::add_clause(unsigned n, sat::literal* lits, th_proof_hint const* ps, bool is_redundant) {
+        if (ctx.use_drat() && !ps) 
+            ps = ctx.mk_smt_clause(name(), n, lits);
+                
         bool was_true = false;
-        for (auto lit : lits)
-            was_true |= is_true(lit);
-        s().add_clause(lits.size(), lits.data(), mk_status());
+        for (unsigned i = 0; i < n; ++i)       
+            was_true |= is_true(lits[i]);
+        ctx.add_root(n, lits);
+        s().add_clause(n, lits, sat::status::th(is_redundant, get_id(), ps));
         return !was_true;
     }
 
@@ -213,12 +214,7 @@ namespace euf {
     }
 
     euf::enode* th_euf_solver::e_internalize(expr* e) {
-        euf::enode* n = expr2enode(e);
-        if (!n) {
-            ctx.internalize(e, m_is_redundant);
-            n = expr2enode(e);
-        }
-        return n;
+        return ctx.e_internalize(e);
     }
 
     unsigned th_euf_solver::random() {
@@ -229,63 +225,70 @@ namespace euf {
         return sat::constraint_base::obj_size(sizeof(th_explain) + sizeof(sat::literal) * num_lits + sizeof(enode_pair) * num_eqs);
     }
 
-    th_explain::th_explain(unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs, sat::literal c, enode_pair const& p) {
+    th_explain::th_explain(unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs, sat::literal c, enode_pair const& p, th_proof_hint const* pma) {
         m_consequent = c;
         m_eq = p;
+        m_proof_hint = pma;
         m_num_literals = n_lits;
         m_num_eqs = n_eqs;
-        m_literals = reinterpret_cast<literal*>(reinterpret_cast<char*>(this) + sizeof(th_explain));
-        for (unsigned i = 0; i < n_lits; ++i)
+        char * base_ptr = reinterpret_cast<char*>(this) + sizeof(th_explain); 
+        m_literals = reinterpret_cast<literal*>(base_ptr);
+        unsigned i;
+        for (i = 0; i < n_lits; ++i)
             m_literals[i] = lits[i];
-        m_eqs = reinterpret_cast<enode_pair*>(reinterpret_cast<char*>(this) + sizeof(th_explain) + sizeof(literal) * n_lits);
-        for (unsigned i = 0; i < n_eqs; ++i)
-            m_eqs[i] = eqs[i];       
- 
+        base_ptr += sizeof(literal) * n_lits;
+        m_eqs = reinterpret_cast<enode_pair*>(base_ptr);
+        for (i = 0; i < n_eqs; ++i)
+            m_eqs[i] = eqs[i];
     }
 
-    th_explain* th_explain::mk(th_euf_solver& th, unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs, sat::literal c, enode* x, enode* y) {
+    th_explain* th_explain::mk(th_euf_solver& th, unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs, sat::literal c, enode* x, enode* y, th_proof_hint const* pma) {
         region& r = th.ctx.get_region();
         void* mem = r.allocate(get_obj_size(n_lits, n_eqs));
         sat::constraint_base::initialize(mem, &th);
-        return new (sat::constraint_base::ptr2mem(mem)) th_explain(n_lits, lits, n_eqs, eqs, c, enode_pair(x, y));
+        return new (sat::constraint_base::ptr2mem(mem)) th_explain(n_lits, lits, n_eqs, eqs, c, enode_pair(x, y), pma);
     }
 
-    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs, sat::literal consequent) {
-        return mk(th, lits.size(), lits.data(), eqs.size(), eqs.data(), consequent, nullptr, nullptr);
+    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs, sat::literal consequent, th_proof_hint const* ph) {
+        return mk(th, lits.size(), lits.data(), eqs.size(), eqs.data(), consequent, nullptr, nullptr, ph);
     }
 
-    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs, euf::enode* x, euf::enode* y) {
-        return mk(th, lits.size(), lits.data(), eqs.size(), eqs.data(), sat::null_literal, x, y);
+    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs, euf::enode* x, euf::enode* y, th_proof_hint const* ph) {
+        return mk(th, lits.size(), lits.data(), eqs.size(), eqs.data(), sat::null_literal, x, y, ph);
     }
 
-    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal lit, euf::enode* x, euf::enode* y) {
-        return mk(th, 1, &lit, 0, nullptr, sat::null_literal, x, y);
+    th_explain* th_explain::propagate(th_euf_solver& th, enode_pair_vector const& eqs, euf::enode* x, euf::enode* y, th_proof_hint const* ph) {
+        return mk(th, 0, nullptr, eqs.size(), eqs.data(), sat::null_literal, x, y, ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs) {
-        return conflict(th, lits.size(), lits.data(), eqs.size(), eqs.data());
+    th_explain* th_explain::propagate(th_euf_solver& th, sat::literal lit, euf::enode* x, euf::enode* y, th_proof_hint const* ph) {
+        return mk(th, 1, &lit, 0, nullptr, sat::null_literal, x, y, ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs) {
-        return mk(th, n_lits, lits, n_eqs, eqs, sat::null_literal, nullptr, nullptr);
+    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal_vector const& lits, enode_pair_vector const& eqs, th_proof_hint const* ph) {
+        return conflict(th, lits.size(), lits.data(), eqs.size(), eqs.data(), ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, enode_pair_vector const& eqs) {
-        return conflict(th, 0, nullptr, eqs.size(), eqs.data());
+    th_explain* th_explain::conflict(th_euf_solver& th, unsigned n_lits, sat::literal const* lits, unsigned n_eqs, enode_pair const* eqs, th_proof_hint const* ph) {
+        return mk(th, n_lits, lits, n_eqs, eqs, sat::null_literal, nullptr, nullptr, ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal lit) {
-        return conflict(th, 1, &lit, 0, nullptr);
+    th_explain* th_explain::conflict(th_euf_solver& th, enode_pair_vector const& eqs, th_proof_hint const* ph) {
+        return conflict(th, 0, nullptr, eqs.size(), eqs.data(), ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal lit, euf::enode* x, euf::enode* y) {
+    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal lit, th_proof_hint const* ph) {
+        return conflict(th, 1, &lit, 0, nullptr, ph);
+    }
+
+    th_explain* th_explain::conflict(th_euf_solver& th, sat::literal lit, euf::enode* x, euf::enode* y, th_proof_hint const* ph) {
         enode_pair eq(x, y);
-        return conflict(th, 1, &lit, 1, &eq);
+        return conflict(th, 1, &lit, 1, &eq, ph);
     }
 
-    th_explain* th_explain::conflict(th_euf_solver& th, euf::enode* x, euf::enode* y) {
+    th_explain* th_explain::conflict(th_euf_solver& th, euf::enode* x, euf::enode* y, th_proof_hint const* ph) {
         enode_pair eq(x, y);
-        return conflict(th, 0, nullptr, 1, &eq);
+        return conflict(th, 0, nullptr, 1, &eq, ph);
     }
 
     std::ostream& th_explain::display(std::ostream& out) const {
@@ -297,6 +300,8 @@ namespace euf {
             out << "--> " << m_consequent;
         if (m_eq.first != nullptr)
             out << "--> " << m_eq.first->get_expr_id() << " == " << m_eq.second->get_expr_id();
+        if (m_proof_hint != nullptr)
+            out << " p ";
         return out;
     }
 

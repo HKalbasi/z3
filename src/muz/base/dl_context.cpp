@@ -17,6 +17,7 @@ Revision History:
 
 --*/
 
+#include<iostream>
 #include<sstream>
 #include<limits>
 #include "ast/arith_decl_plugin.h"
@@ -52,7 +53,7 @@ namespace datalog {
                 m_limited_size = ctx.get_decl_util().try_get_size(s, m_size);
         }
     public:
-        virtual ~sort_domain() {}
+        virtual ~sort_domain() = default;
 
         sort_kind get_kind() const { return m_kind; }
         virtual unsigned get_constant_count() const = 0;
@@ -158,8 +159,6 @@ namespace datalog {
     public:
         restore_rules(context& ctx, rule_set& r): ctx(ctx), m_old_rules(alloc(rule_set, r)) {}
 
-        ~restore_rules() override {}
-
         void undo() override {
             ctx.replace_rules(*m_old_rules);
             reset();
@@ -172,7 +171,6 @@ namespace datalog {
         unsigned m_old_size;
     public:
         restore_vec_size_trail(Vec& v): m_vector(v), m_old_size(v.size()) {}
-        ~restore_vec_size_trail() override {}
         void undo() override { m_vector.shrink(m_old_size); }
     };
 
@@ -579,6 +577,7 @@ namespace datalog {
             m_rule_properties.check_uninterpreted_free();
             m_rule_properties.check_nested_free();
             m_rule_properties.check_infinite_sorts();
+            m_rule_properties.check_background_free();
             break;
         case SPACER_ENGINE:
             m_rule_properties.collect(r);
@@ -586,6 +585,7 @@ namespace datalog {
             m_rule_properties.check_for_negated_predicates();
             m_rule_properties.check_uninterpreted_free();
             m_rule_properties.check_quantifier_free(exists_k);
+            m_rule_properties.check_background_free();
             break;
         case BMC_ENGINE:
             m_rule_properties.collect(r);
@@ -600,13 +600,16 @@ namespace datalog {
             m_rule_properties.collect(r);
             m_rule_properties.check_existential_tail();
             m_rule_properties.check_for_negated_predicates();
+            m_rule_properties.check_background_free();
             break;
         case CLP_ENGINE:
             m_rule_properties.collect(r);
             m_rule_properties.check_existential_tail();
             m_rule_properties.check_for_negated_predicates();
+            m_rule_properties.check_background_free();
             break;
         case DDNF_ENGINE:
+            m_rule_properties.check_background_free();
             break;
         case LAST_ENGINE:
         default:
@@ -646,6 +649,12 @@ namespace datalog {
     }
 
     void context::add_table_fact(func_decl * pred, const table_fact & fact) {
+        if (!is_uninterp(pred)) {
+            std::stringstream strm;
+            strm << "Predicate " << pred->get_name() << " when used for facts should be uninterpreted";        
+            throw default_exception(strm.str());
+        }
+        
         if (get_engine() == DATALOG_ENGINE) {
             ensure_engine();
             m_rel->add_fact(pred, fact);

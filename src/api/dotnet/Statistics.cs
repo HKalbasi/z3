@@ -19,10 +19,11 @@ Notes:
 
 using System;
 using System.Diagnostics;
-
-
 namespace Microsoft.Z3
 {
+
+    using Z3_context = System.IntPtr;
+    using Z3_stats = System.IntPtr;
     /// <summary>
     /// Objects of this class track statistical information about solvers. 
     /// </summary>
@@ -123,23 +124,27 @@ namespace Microsoft.Z3
         {
             get
             {
-
-                uint n = Size;
-                Entry[] res = new Entry[n];
-                for (uint i = 0; i < n; i++)
-                {
-                    Entry e;
-                    string k = Native.Z3_stats_get_key(Context.nCtx, NativeObject, i);
-                    if (Native.Z3_stats_is_uint(Context.nCtx, NativeObject, i) != 0)
-                        e = new Entry(k, Native.Z3_stats_get_uint_value(Context.nCtx, NativeObject, i));
-                    else if (Native.Z3_stats_is_double(Context.nCtx, NativeObject, i) != 0)
-                        e = new Entry(k, Native.Z3_stats_get_double_value(Context.nCtx, NativeObject, i));
-                    else
-                        throw new Z3Exception("Unknown data entry value");
-                    res[i] = e;
-                }
-                return res;
+                return NativeEntries(Context.nCtx, NativeObject);
             }
+        }
+
+        internal static Entry[] NativeEntries(Z3_context ctx, Z3_stats stats)
+        {
+            uint n = Native.Z3_stats_size(ctx, stats);
+            Entry[] res = new Entry[n];
+            for (uint i = 0; i < n; i++)
+            {
+                Entry e;
+                string k = Native.Z3_stats_get_key(ctx, stats, i);
+                if (Native.Z3_stats_is_uint(ctx, stats, i) != 0)
+                    e = new Entry(k, Native.Z3_stats_get_uint_value(ctx, stats, i));
+                else if (Native.Z3_stats_is_double(ctx, stats, i) != 0)
+                    e = new Entry(k, Native.Z3_stats_get_double_value(ctx, stats, i));
+                else
+                    throw new Z3Exception("Unknown data entry value");
+                res[i] = e;
+            }
+            return res;
         }
 
         /// <summary>
@@ -182,31 +187,18 @@ namespace Microsoft.Z3
             Debug.Assert(ctx != null);
         }
 
-        internal class DecRefQueue : IDecRefQueue
-        {
-            public DecRefQueue() : base() { }
-            public DecRefQueue(uint move_limit) : base(move_limit) { }
-            internal override void IncRef(Context ctx, IntPtr obj)
-            {
-                Native.Z3_stats_inc_ref(ctx.nCtx, obj);
-            }
-
-            internal override void DecRef(Context ctx, IntPtr obj)
-            {
-                Native.Z3_stats_dec_ref(ctx.nCtx, obj);
-            }
-        };
-
         internal override void IncRef(IntPtr o)
         {
-            Context.Statistics_DRQ.IncAndClear(Context, o);
-            base.IncRef(o);
+            Native.Z3_stats_inc_ref(Context.nCtx, o);
         }
 
         internal override void DecRef(IntPtr o)
         {
-            Context.Statistics_DRQ.Add(o);
-            base.DecRef(o);
+            lock (Context)
+            {
+                if (Context.nCtx != IntPtr.Zero)
+                    Native.Z3_stats_dec_ref(Context.nCtx, o);
+            }
         }
         #endregion
     }

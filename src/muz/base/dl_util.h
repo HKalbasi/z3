@@ -18,13 +18,14 @@ Revision History:
 --*/
 #pragma once
 
+
 #include<vector>
 #include "ast/ast.h"
 #include "util/hashtable.h"
 #include "util/obj_hashtable.h"
 #include "util/uint_set.h"
-#include "tactic/horn_subsume_model_converter.h"
-#include "tactic/replace_proof_converter.h"
+#include "ast/converters/horn_subsume_model_converter.h"
+#include "ast/converters/replace_proof_converter.h"
 #include "ast/substitution/substitution.h"
 #include "ast/rewriter/ast_counter.h"
 #include "util/statistics.h"
@@ -257,12 +258,14 @@ namespace datalog {
             }
             container[i-ofs] = container[i];
         }
+#if 0
         if (r_i != removed_col_cnt) {
             for (unsigned i = 0; i < removed_col_cnt; ++i) {
                 std::cout << removed_cols[i] << " ";
             }
             std::cout << " container size: " << n << "\n";
         }
+#endif
         SASSERT(r_i==removed_col_cnt);
         container.resize(n-removed_col_cnt);
     }
@@ -317,32 +320,28 @@ namespace datalog {
         unsigned_vector & res, bool & identity);
 
     template<class T>
-    void permutate_by_cycle(T & container, unsigned cycle_len, const unsigned * permutation_cycle) {
-        if (cycle_len<2) {
+    void permute_by_cycle(T& container, unsigned cycle_len, const unsigned * permutation_cycle) {
+        if (cycle_len < 2) 
             return;
-        }
         auto aux = container[permutation_cycle[0]];
-        for (unsigned i=1; i<cycle_len; i++) {
-            container[permutation_cycle[i-1]]=container[permutation_cycle[i]];
-        }
-        container[permutation_cycle[cycle_len-1]]=aux;
+        for (unsigned i = 1; i < cycle_len; i++) 
+            container[permutation_cycle[i-1]] = container[permutation_cycle[i]];
+        container[permutation_cycle[cycle_len-1]] = aux;
     }
-
     template<class T, class M>
-    void permutate_by_cycle(ref_vector<T,M> & container, unsigned cycle_len, const unsigned * permutation_cycle) {
-        if (cycle_len<2) {
+    void permute_by_cycle(ref_vector<T,M> & container, unsigned cycle_len, const unsigned * permutation_cycle) {
+        if (cycle_len < 2) 
             return;
-        }
         T * aux = container.get(permutation_cycle[0]);
-        for (unsigned i=1; i<cycle_len; i++) {
+        for (unsigned i=1; i < cycle_len; i++) {
             container.set(permutation_cycle[i-1], container.get(permutation_cycle[i]));
         }
         container.set(permutation_cycle[cycle_len-1], aux);
     }
 
     template<class T>
-    void permutate_by_cycle(T & container, const unsigned_vector & permutation_cycle) {
-        permutate_by_cycle(container, permutation_cycle.size(), permutation_cycle.data());
+    void permute_by_cycle(T & container, const unsigned_vector & permutation_cycle) {
+        permute_by_cycle(container, permutation_cycle.size(), permutation_cycle.data());
     }
 
 
@@ -353,7 +352,7 @@ namespace datalog {
         unsigned get_max_rule_var(const rule& r);
     };
 
-    void del_rule(horn_subsume_model_converter* mc, rule& r, bool unreachable);
+    void del_rule(horn_subsume_model_converter* mc, rule& r, lbool unreachable);
 
     void resolve_rule(rule_manager& rm,
                       replace_proof_converter* pc, rule const& r1, rule const& r2, unsigned idx, 

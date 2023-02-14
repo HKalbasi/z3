@@ -877,7 +877,7 @@ namespace qe {
 
     class quant_elim {
     public:
-        virtual ~quant_elim() {}
+        virtual ~quant_elim() = default;
     
         virtual lbool eliminate_exists(
             unsigned num_vars, app* const* vars, 
@@ -1437,13 +1437,12 @@ namespace qe {
                 res = m_solver.check();
                 if (res == l_true && has_uninterpreted(m, m_fml))
                     res = l_undef;
-                if (res == l_true) {
+                if (res == l_true)
+                    res = final_check();
+                if (res == l_true)
                     is_sat = true;
-                    final_check();
-                }
-                else {
+                else 
                     break;
-                }
             }
             if (res == l_undef) {
                 free_vars.append(num_vars, vars);
@@ -1484,13 +1483,11 @@ namespace qe {
                   tout << "free: " << m_free_vars << "\n";);
 
             free_vars.append(m_free_vars);
-            if (!m_free_vars.empty() || m_solver.inconsistent()) {
 
-                if (m_fml.get() != m_subfml.get()) {
-                    scoped_ptr<expr_replacer> rp = mk_default_expr_replacer(m, false);
-                    rp->apply_substitution(to_app(m_subfml.get()), fml, m_fml);
-                    fml = m_fml;
-                }
+            if (m_fml.get() != m_subfml.get()) {
+                scoped_ptr<expr_replacer> rp = mk_default_expr_replacer(m, false);
+                rp->apply_substitution(to_app(m_subfml.get()), fml, m_fml);
+                fml = m_fml;
             }
             reset();
             m_solver.pop(1);
@@ -1503,30 +1500,34 @@ namespace qe {
 
     private:
 
-        void final_check() {
-            model_ref model;
+        lbool final_check() {
+            model_ref model;            
             m_solver.get_model(model);
+            if (!model)
+                return l_undef;
             scoped_ptr<model_evaluator> model_eval = alloc(model_evaluator, *model);
 
-            while (true) {
+            while (m.inc()) {
                 TRACE("qe", model_v2_pp(tout, *model););
-                while (can_propagate_assignment(*model_eval)) {
+                while (can_propagate_assignment(*model_eval)) 
                     propagate_assignment(*model_eval);
-                }
                 VERIFY(CHOOSE_VAR == update_current(*model_eval, true));
                 SASSERT(m_current->fml());
-                if (l_true != m_solver.check()) {
-                    return;
-                }
+                if (l_true != m_solver.check()) 
+                    return l_true;                
                 m_solver.get_model(model);
+                if (!model)
+                    return l_undef;
                 model_eval = alloc(model_evaluator, *model);
                 search_tree* st = m_current;
                 update_current(*model_eval, false);
-                if (st == m_current) {
+                if (st == m_current) 
                     break;
-                }
-            }            
-            pop(*model_eval);                    
+            }
+            if (!m.inc())
+                return l_undef;
+            pop(*model_eval);
+            return l_true;            
         } 
 
         ast_manager& get_manager() override { return m; }

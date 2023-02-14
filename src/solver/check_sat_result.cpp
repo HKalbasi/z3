@@ -20,7 +20,10 @@ Notes:
 
 void check_sat_result::set_reason_unknown(event_handler& eh) {
     switch (eh.caller_id()) {
-    case UNSET_EH_CALLER: break;
+    case UNSET_EH_CALLER: 
+        if (reason_unknown() == "")
+            set_reason_unknown("unclassifed exception");
+        break;
     case CTRL_C_EH_CALLER:
         set_reason_unknown("interrupted from keyboard");
         break;
@@ -36,8 +39,21 @@ void check_sat_result::set_reason_unknown(event_handler& eh) {
     }
 }
 
+proof* check_sat_result::get_proof() {
+    if (!m_log.empty() && !m_proof) {
+        SASSERT(is_app(m_log.back()));
+        app* last = to_app(m_log.back());
+        expr* fact = m.get_fact(last);
+        m_log.push_back(fact);
+        m_proof = m.mk_clause_trail(m_log.size(), m_log.data());            
+    }
+    if (m_proof)
+        return m_proof.get();
+    return get_proof_core();
+}
 
 simple_check_sat_result::simple_check_sat_result(ast_manager & m):
+    check_sat_result(m),
     m_core(m),
     m_proof(m) {
     }
@@ -63,7 +79,7 @@ void simple_check_sat_result::get_model_core(model_ref & m) {
         m = nullptr;
 }
 
-proof * simple_check_sat_result::get_proof() { 
+proof * simple_check_sat_result::get_proof_core() { 
     return m_proof;
 }
 

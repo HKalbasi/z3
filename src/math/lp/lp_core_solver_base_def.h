@@ -17,6 +17,8 @@ Revision History:
 
 
 --*/
+#pragma once
+
 #include <set>
 #include <string>
 #include "util/vector.h"
@@ -53,7 +55,6 @@ lp_core_solver_base(static_matrix<T, X> & A,
     m_costs(costs),
     m_settings(settings),
     m_y(m_m()),
-    m_factorization(nullptr),
     m_column_names(column_names),
     m_w(m_m()),
     m_d(m_n()),

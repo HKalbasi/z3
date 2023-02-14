@@ -509,6 +509,8 @@ namespace smtfd {
             m_context.add_plugin(this);
         }
 
+        virtual ~theory_plugin() = default;
+
         table& ast2table(ast* f, sort* s) {
             unsigned idx = 0;
             if (!m_ast2table.find(f, s, idx)) {
@@ -619,7 +621,7 @@ namespace smtfd {
             return false;
         }
         else if (round < max_rounds) {
-            for (expr* t : subterms(core)) {
+            for (expr* t : subterms::ground(core)) {
                 for (theory_plugin* p : m_plugins) {
                     p->check_term(t, round);
                 }
@@ -863,7 +865,7 @@ namespace smtfd {
                 }
                 mdl->register_decl(fn, fi);
             }
-            for (expr* t : subterms(terms)) {
+            for (expr* t : subterms::ground(terms)) {
                 if (is_uninterp_const(t) && sort_covered(t->get_sort())) {
                     expr_ref val = model_value(t);
                     mdl->register_decl(to_app(t)->get_decl(), val);
@@ -1038,11 +1040,6 @@ namespace smtfd {
         // A[j] = w: i = j or T[j] = A[j]
         // 
         void reconcile_stores(app* t, expr* vT, table& tT, expr* vA, table& tA) {
-            unsigned r = 0;
-            //if (get_lambda(vA) <= 1) {
-            //    return;
-            //}
-            //std::cout << get_lambda(vA) << " " << get_lambda(vT) << "\n";
             inc_lambda(vT);
             for (auto& fA : tA) {
                 f_app fT;
@@ -1054,23 +1051,8 @@ namespace smtfd {
                 }
                 if (!tT.find(fA, fT) || (value_of(fA) != value_of(fT) && !eq(m_vargs, fA))) {
                     add_select_store_axiom(t, fA);
-                    ++r;
                 }
             }            
-#if 0
-            // only up-propagation really needed.
-            for (auto& fT : tT) {
-                f_app fA;
-                if (m_context.at_max()) {
-                    break;
-                }
-                if (!tA.find(fT, fA) && t->get_sort() == m.get_sort(fT.m_t->get_arg(0))) {
-                    TRACE("smtfd", tout << "not found\n";);
-                    add_select_store_axiom(t, fT);
-                    ++r;
-                }
-            }
-#endif
         }
 
         void add_select_store_axiom(app* t, f_app& f) {
@@ -1305,7 +1287,7 @@ namespace smtfd {
 
 
         void populate_model(model_ref& mdl, expr_ref_vector const& terms) override {
-            for (expr* t : subterms(terms)) {
+            for (expr* t : subterms::ground(terms)) {
                 if (is_uninterp_const(t) && m_autil.is_array(t)) {
                     mdl->register_decl(to_app(t)->get_decl(), model_value_core(t));
                 }
@@ -1317,7 +1299,7 @@ namespace smtfd {
         void global_check(expr_ref_vector const& core) override {  
             expr_mark seen;
             expr_ref_vector shared(m), sharedvals(m);
-            for (expr* t : subterms(core)) {
+            for (expr* t : subterms::ground(core)) {
                 if (!is_app(t)) continue;
                 app* a = to_app(t);
                 unsigned offset = 0;
@@ -1463,7 +1445,7 @@ namespace smtfd {
             
             if (r == l_true) {
                 expr_ref qq(q->get_expr(), m);
-                for (expr* t : subterms(qq)) {
+                for (expr* t : subterms::ground(qq)) {
                     init_term(t);
                 }
                 m_solver->get_model(mdl);
@@ -1558,10 +1540,10 @@ namespace smtfd {
         void init_val2term(expr_ref_vector const& fmls, expr_ref_vector const& core) {
             m_val2term_trail.reset();
             m_val2term.reset();
-            for (expr* t : subterms(core)) {
+            for (expr* t : subterms::ground(core)) {
                 init_term(t);
             }
-            for (expr* t : subterms(fmls)) {
+            for (expr* t : subterms::ground(fmls)) {
                 init_term(t);
             }
         }
@@ -1719,12 +1701,12 @@ namespace smtfd {
             m_context.reset(m_model);
             expr_ref_vector terms(core);
             terms.append(m_axioms);
-            for (expr* t : subterms(core)) {
+            for (expr* t : subterms::ground(core)) {
                 if (is_forall(t) || is_exists(t)) {
                     has_q = true;
                 }
             }
-            for (expr* t : subterms(terms)) {
+            for (expr* t : subterms::ground(terms)) {
                 if (!is_forall(t) && !is_exists(t) && (!m_context.term_covered(t) || !m_context.sort_covered(t->get_sort()))) {
                     is_decided = l_false;
                 }
@@ -1733,7 +1715,7 @@ namespace smtfd {
 
             TRACE("smtfd", 
                   tout << "axioms: " << m_axioms << "\n";
-                  for (expr* a : subterms(terms)) {
+                  for (expr* a : subterms::ground(terms)) {
                       expr_ref val0 = (*m_model)(a);
                       expr_ref val1 = (*m_model)(abs(a));
                       if (is_ground(a) && val0 != val1 && val0->get_sort() == val1->get_sort()) {
@@ -1750,18 +1732,18 @@ namespace smtfd {
 
             DEBUG_CODE(
                 bool found_bad = false;
-                for (expr* a : subterms(core)) {
+                for (expr* a : subterms::ground(core)) {
                     expr_ref val0 = (*m_model)(a);
                     expr_ref val1 = (*m_model)(abs(a));
                     if (is_ground(a) && val0 != val1 && val0->get_sort() == val1->get_sort()) {
-                        std::cout << mk_bounded_pp(a, m, 2) << " := " << val0 << " " << val1 << "\n";
+                        //std::cout << mk_bounded_pp(a, m, 2) << " := " << val0 << " " << val1 << "\n";
                         found_bad = true;
                     }
                 }
                 if (found_bad) {
-                    std::cout << "core: " << core << "\n";
-                    std::cout << *m_model.get() << "\n";
-                    exit(0);
+                    //std::cout << "core: " << core << "\n";
+                    //std::cout << *m_model.get() << "\n";
+                    UNREACHABLE();
                 });
 
             if (!has_q) {
@@ -1865,9 +1847,7 @@ namespace smtfd {
             updt_params(p);
             add_toggle(m.mk_true());
         }
-        
-        ~solver() override {}
-        
+
         ::solver* translate(ast_manager& dst_m, params_ref const& p) override {
             solver* result = alloc(solver, m_indent, dst_m, p);
             if (m_fd_sat_solver) result->m_fd_sat_solver = m_fd_sat_solver->translate(dst_m, p);
@@ -2075,7 +2055,7 @@ namespace smtfd {
             return m_fd_sat_solver->get_model_converter();
         }
         
-        proof * get_proof() override { return nullptr; }
+        proof * get_proof_core() override { return nullptr; }
         std::string reason_unknown() const override { return m_reason_unknown; }
         void set_reason_unknown(char const* msg) override { m_reason_unknown = msg; }
         void get_labels(svector<symbol> & r) override { }
@@ -2086,6 +2066,10 @@ namespace smtfd {
         expr_ref_vector cube(expr_ref_vector& vars, unsigned backtrack_level) override { 
             return expr_ref_vector(m);
         }
+
+        expr* congruence_root(expr* e) override { return e; }
+
+        expr* congruence_next(expr* e) override { return e; }
         
         lbool get_consequences_core(expr_ref_vector const& asms, expr_ref_vector const& vars, expr_ref_vector& consequences) override {
             return l_undef;
@@ -2096,9 +2080,9 @@ namespace smtfd {
             m_fd_sat_solver->get_levels(vars, depth);
         }
         
-        expr_ref_vector get_trail() override {
+        expr_ref_vector get_trail(unsigned max_level) override {
             init();
-            return m_fd_sat_solver->get_trail();
+            return m_fd_sat_solver->get_trail(max_level);
         }
         
         unsigned get_num_assertions() const override {

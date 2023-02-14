@@ -15,7 +15,6 @@ Author:
 Revision History:
 
 --*/
-#include<iostream>
 #include "util/cancel_eh.h"
 #include "util/scoped_timer.h"
 #include "util/scoped_ctrl_c.h"
@@ -67,7 +66,6 @@ extern "C" {
     void Z3_API Z3_optimize_dec_ref(Z3_context c, Z3_optimize o) {
         Z3_TRY;
         LOG_Z3_optimize_dec_ref(c, o);
-        RESET_ERROR_CODE();
         if (o)
             to_optimize(o)->dec_ref();
         Z3_CATCH;
@@ -325,6 +323,7 @@ extern "C" {
         RESET_ERROR_CODE();
         Z3_stats_ref * st = alloc(Z3_stats_ref, *mk_c(c));
         to_optimize_ptr(d)->collect_statistics(st->m_stats);
+        to_optimize_ptr(d)->collect_timer_stats(st->m_stats);
         mk_c(c)->save_object(st);
         Z3_stats r = of_stats(st);
         RETURN_Z3(r);
@@ -384,8 +383,7 @@ extern "C" {
         Z3_string     s) {
         Z3_TRY;
         //LOG_Z3_optimize_from_string(c, d, s);
-        std::string str(s);
-        std::istringstream is(str);
+        std::istringstream is(s);
         Z3_optimize_from_stream(c, d, is, nullptr);
         Z3_CATCH;
     }

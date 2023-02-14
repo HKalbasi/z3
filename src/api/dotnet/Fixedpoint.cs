@@ -255,7 +255,7 @@ namespace Microsoft.Z3
             get
             {
 
-                ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_get_rules(Context.nCtx, NativeObject));
+                using ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_get_rules(Context.nCtx, NativeObject));
                 return av.ToBoolExprArray();
             }
         }
@@ -268,7 +268,7 @@ namespace Microsoft.Z3
             get
             {
 
-                ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_get_assertions(Context.nCtx, NativeObject));
+                using ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_get_assertions(Context.nCtx, NativeObject));
                 return av.ToBoolExprArray();
             }
         }
@@ -292,7 +292,7 @@ namespace Microsoft.Z3
         /// </summary>                
         public BoolExpr[] ParseFile(string file)
         {
-            ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_from_file(Context.nCtx, NativeObject, file));
+            using ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_from_file(Context.nCtx, NativeObject, file));
             return av.ToBoolExprArray();
         }
 
@@ -301,7 +301,7 @@ namespace Microsoft.Z3
         /// </summary>
         public BoolExpr[] ParseString(string s)
         {
-            ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_from_string(Context.nCtx, NativeObject, s));
+            using ASTVector av = new ASTVector(Context, Native.Z3_fixedpoint_from_string(Context.nCtx, NativeObject, s));
             return av.ToBoolExprArray();
         }
 
@@ -318,31 +318,18 @@ namespace Microsoft.Z3
             Debug.Assert(ctx != null);
         }
 
-        internal class DecRefQueue : IDecRefQueue
-        {
-            public DecRefQueue() : base() { }
-            public DecRefQueue(uint move_limit) : base(move_limit) { }
-            internal override void IncRef(Context ctx, IntPtr obj)
-            {
-                Native.Z3_fixedpoint_inc_ref(ctx.nCtx, obj);
-            }
-
-            internal override void DecRef(Context ctx, IntPtr obj)
-            {
-                Native.Z3_fixedpoint_dec_ref(ctx.nCtx, obj);
-            }
-        };
-
         internal override void IncRef(IntPtr o)
         {
-            Context.Fixedpoint_DRQ.IncAndClear(Context, o);
-            base.IncRef(o);
+            Native.Z3_fixedpoint_inc_ref(Context.nCtx, o);
         }
 
         internal override void DecRef(IntPtr o)
         {
-            Context.Fixedpoint_DRQ.Add(o);
-            base.DecRef(o);
+            lock (Context)
+            {
+                if (Context.nCtx != IntPtr.Zero)
+                    Native.Z3_fixedpoint_dec_ref(Context.nCtx, o);
+            }
         }
         #endregion
     }

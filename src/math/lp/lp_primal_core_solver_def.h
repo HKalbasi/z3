@@ -17,6 +17,8 @@ Revision History:
 
 
 --*/
+#pragma once
+
 #include <list>
 #include "util/vector.h"
 #include <fstream>
@@ -478,7 +480,7 @@ template <typename T, typename X> int lp_primal_core_solver<T, X>::find_leaving_
 template <typename T, typename X>    int lp_primal_core_solver<T, X>::find_leaving_and_t(unsigned entering, X & t) {
     if (this->m_settings.use_breakpoints_in_feasibility_search && !this->current_x_is_feasible())
         return find_leaving_and_t_with_breakpoints(entering, t);
-    X theta;
+    X theta = zero_of_type<X>();
     bool unlimited = get_harris_theta(theta);
     lp_assert(unlimited || theta >= zero_of_type<X>());
     if (try_jump_to_another_bound_on_entering(entering, theta, t, unlimited)) return entering;
@@ -956,8 +958,6 @@ template <typename T, typename X> unsigned lp_primal_core_solver<T, X>::solve() 
              &&
              this->iters_with_no_cost_growing() <= this->m_settings.max_number_of_iterations_with_no_improvements
              &&
-             this->total_iterations() <= this->m_settings.max_total_number_of_iterations
-             &&
              !(this->current_x_is_feasible() && this->m_look_for_feasible_solution_only));
 
     lp_assert(this->get_status() == lp_status::FLOATING_POINT_ERROR
@@ -1097,10 +1097,8 @@ template <typename T, typename X> bool lp_primal_core_solver<T, X>::done() {
         return true;
     }
     if (this->m_iters_with_no_cost_growing >= this->m_settings.max_number_of_iterations_with_no_improvements) {
-        this->get_status() = lp_status::ITERATIONS_EXHAUSTED; return true;
-    }
-    if (this->total_iterations() >= this->m_settings.max_total_number_of_iterations) {
-        this->get_status() = lp_status::ITERATIONS_EXHAUSTED; return true;
+        this->set_status(lp_status::CANCELLED);
+        return true;
     }
     return false;
 }

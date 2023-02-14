@@ -18,7 +18,7 @@ Notes:
 
 --*/
 #include "tactic/tactical.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/simplifiers/bound_manager.h"
 #include "ast/ast_pp.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/bv_decl_plugin.h"
@@ -165,10 +165,6 @@ public:
         m_bounds(m) {
     }
 
-    ~eq2bv_tactic() override {
-    }
-        
-        
     void updt_params(params_ref const & p) override {
     }
     
@@ -183,7 +179,8 @@ public:
 
         tactic_report report("eq2bv", *g);
 
-        m_bounds(*g);
+        for (unsigned i = 0; i < g->size(); ++i)
+            m_bounds(g->form(i), g->dep(i), g->pr(i));
 
         if (m_bounds.inconsistent() || g->proofs_enabled()) {
             g->inc_depth();
@@ -268,6 +265,8 @@ public:
     tactic * translate(ast_manager & m) override {
         return alloc(eq2bv_tactic, m);
     }
+
+    char const* name() const override { return "eq2bv"; }
         
     void collect_param_descrs(param_descrs & r) override {
     }

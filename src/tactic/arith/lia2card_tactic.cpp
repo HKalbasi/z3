@@ -24,8 +24,8 @@ Notes:
 #include "ast/ast_util.h"
 #include "ast/ast_pp_util.h"
 #include "tactic/tactical.h"
-#include "tactic/arith/bound_manager.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/simplifiers/bound_manager.h"
+#include "ast/converters/generic_model_converter.h"
 
 class lia2card_tactic : public tactic {
 
@@ -132,9 +132,11 @@ public:
         dealloc(m_todo);
     }
 
+    char const* name() const override { return "lia2card"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_compile_equality = p.get_bool("compile_equality", true);
+        m_params.append(p);
+        m_compile_equality = m_params.get_bool("compile_equality", true);
     }
 
     expr_ref mk_bounded(expr_ref_vector& axioms, app* x, unsigned lo, unsigned hi) {
@@ -178,7 +180,8 @@ public:
         tactic_report report("lia2card", *g);
 
         bound_manager bounds(m);
-        bounds(*g);
+        for (unsigned i = 0; i < g->size(); ++i)
+            bounds(g->form(i), g->dep(i), g->pr(i));
 
         for (expr* x : bounds) {
             checkpoint();
@@ -214,11 +217,10 @@ public:
             }
             // IF_VERBOSE(0, verbose_stream() << mk_pp(g->form(i), m) << "\n--->\n" << new_curr << "\n";);
             g->update(i, new_curr, new_pr, g->dep(i));
-
         }
-        for (expr* a : axioms) {
+        for (expr* a : axioms) 
             g->assert_expr(a);
-        }
+
         if (m_mc) g->add(m_mc.get());
         g->inc_depth();
         result.push_back(g.get());

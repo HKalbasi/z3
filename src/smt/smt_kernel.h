@@ -202,6 +202,12 @@ namespace smt {
            \brief Return the set of formulas assigned by the kernel.
         */
         void get_assignments(expr_ref_vector & result);
+
+
+        /**
+           \brief Return units assigned by the kernel.
+        */
+        void get_units(expr_ref_vector& result);
         
         /**
            \brief Return the set of relevant labels in the last check command.
@@ -233,6 +239,13 @@ namespace smt {
         */
         expr_ref_vector cubes(unsigned depth);
 
+        /**
+           \brief access congruence closure
+        */
+        expr* congruence_next(expr* e);
+
+        expr* congruence_root(expr* e);
+
 
         /**
            \brief retrieve depth of variables from decision stack.
@@ -242,7 +255,7 @@ namespace smt {
         /**
            \brief retrieve trail of assignment stack.
         */
-        expr_ref_vector get_trail();
+        expr_ref_vector get_trail(unsigned max_level);
 
         /**
            \brief (For debubbing purposes) Prints the state of the kernel
@@ -284,39 +297,40 @@ namespace smt {
         */
         static void collect_param_descrs(param_descrs & d);
 
+        void register_on_clause(void* ctx, user_propagator::on_clause_eh_t& on_clause);
+
         /**
            \brief initialize a user-propagator "theory"
         */
         void user_propagate_init(
             void* ctx, 
-            solver::push_eh_t&      push_eh,
-            solver::pop_eh_t&       pop_eh,
-            solver::fresh_eh_t&     fresh_eh);
+            user_propagator::push_eh_t&      push_eh,
+            user_propagator::pop_eh_t&       pop_eh,
+            user_propagator::fresh_eh_t&     fresh_eh);
 
-        void user_propagate_register_fixed(solver::fixed_eh_t& fixed_eh);
+        void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh);
 
-        void user_propagate_register_final(solver::final_eh_t& final_eh);
+        void user_propagate_register_final(user_propagator::final_eh_t& final_eh);
         
-        void user_propagate_register_eq(solver::eq_eh_t& eq_eh);
+        void user_propagate_register_eq(user_propagator::eq_eh_t& eq_eh);
         
-        void user_propagate_register_diseq(solver::eq_eh_t& diseq_eh);
+        void user_propagate_register_diseq(user_propagator::eq_eh_t& diseq_eh);
 
-
-        /**
-           \brief register an expression to be tracked fro user propagation.
-        */
-        unsigned user_propagate_register(expr* e);
+        void user_propagate_register_expr(expr* e);
         
+        void user_propagate_register_created(user_propagator::created_eh_t& r);
+
+        void user_propagate_register_decide(user_propagator::decide_eh_t& r);
 
         /**
            \brief Return a reference to smt::context.
-           This is a temporary hack to support user theories.
-           TODO: remove this hack.
-           We need to revamp user theories too.
+           This breaks abstractions. 
+           
+           It is currently used by the opt-solver
+           to access optimization services from arithmetic solvers
+           and to ensure that the solver has registered PB theory solver.
 
-           This method breaks the abstraction barrier.
-
-           \warning We should not use this method
+           \warning This method should not be used in new code.
         */
         context & get_context();
     };

@@ -20,9 +20,9 @@ Revision History:
 #include "ast/rewriter/var_subst.h"
 #include "ast/rewriter/expr_replacer.h"
 #include "tactic/tactical.h"
-#include "tactic/model_converter.h"
-#include "tactic/proof_converter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/model_converter.h"
+#include "ast/converters/proof_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "muz/fp/horn_tactic.h"
 #include "muz/base/dl_context.h"
 #include "muz/fp/dl_register_engine.h"
@@ -241,7 +241,7 @@ class horn_tactic : public tactic {
                 verify(q, g, result, mc, pc);
             }
             g->set(pc.get());
-            g->set(mc.get());
+            g->add(mc.get());
         }
 
         void verify(expr* q,
@@ -282,12 +282,11 @@ class horn_tactic : public tactic {
             }
             case l_false: {
                 // goal is sat
-                mc = concat(g->mc(), mc.get());
                 g->reset();
                 if (produce_models) {
                     model_ref md = m_ctx.get_model();
                     model_converter_ref mc2 = model2model_converter(md.get());
-                    mc = concat(mc.get(), mc2.get());
+                    mc = mc2.get();
                     TRACE("dl", mc->display(tout << *md << "\n"););
                 }
                 break;
@@ -345,6 +344,7 @@ class horn_tactic : public tactic {
                 g->assert_expr(fml);
             }
             g->set_prec(goal::UNDER_OVER);
+            mc = g->mc();
         }
 
         void check_parameters() {
@@ -392,9 +392,11 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "horn"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
 

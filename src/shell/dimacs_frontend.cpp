@@ -26,6 +26,7 @@ Revision History:
 #include "sat/sat_params.hpp"
 #include "sat/sat_solver.h"
 #include "sat/tactic/goal2sat.h"
+#include "sat/tactic/sat2goal.h"
 #include "ast/reg_decl_plugins.h"
 #include "tactic/tactic.h"
 #include "tactic/fd_solver/fd_solver.h"
@@ -74,7 +75,7 @@ static void display_model(sat::solver const & s) {
         case l_true: std::cout << i << " ";  break;
         }
     }
-    std::cout << "\n";
+    std::cout << "0\n";
 }
 
 static void display_core(sat::solver const& s, vector<sat::literal_vector> const& tracking_clauses) {

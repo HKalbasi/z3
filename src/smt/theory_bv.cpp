@@ -24,6 +24,7 @@ Revision History:
 #include "smt/smt_model_generator.h"
 #include "util/stats.h"
 
+#define ENABLE_QUOT_REM_ENCODING 0
 
 namespace smt {
 
@@ -52,9 +53,8 @@ namespace smt {
         bits.reset();
         m_bits_expr.reset();
 
-        for (unsigned i = 0; i < bv_size; i++) {
+        for (unsigned i = 0; i < bv_size; i++) 
             m_bits_expr.push_back(mk_bit2bool(owner, i));
-        }
         ctx.internalize(m_bits_expr.data(), bv_size, true);
 
         for (unsigned i = 0; i < bv_size; i++) {
@@ -224,8 +224,6 @@ namespace smt {
     };
 
     void theory_bv::add_new_diseq_axiom(theory_var v1, theory_var v2, unsigned idx) {
-        if (!params().m_bv_eq_axioms)
-            return;
         m_prop_diseqs.push_back(bv_diseq(v1, v2, idx));
         ctx.push_trail(push_back_vector<svector<bv_diseq>>(m_prop_diseqs));
     }
@@ -297,8 +295,7 @@ namespace smt {
                 m_trail_stack.push(add_var_pos_trail(b));
                 b->m_occs = new (get_region()) var_pos_occ(v, idx, b->m_occs);
             }
-            else {
-                SASSERT(th_id == null_theory_id);
+            else if (th_id == null_theory_id) {
                 ctx.set_var_theory(l.var(), get_id());
                 SASSERT(ctx.get_var_theory(l.var()) == get_id());
                 bit_atom * b = new (get_region()) bit_atom();
@@ -519,6 +516,20 @@ namespace smt {
         }
     }
 
+    bool theory_bv::is_fixed_propagated(theory_var v, expr_ref& val, literal_vector& lits) {
+        numeral r;
+        enode* n = get_enode(v);
+        if (!get_fixed_value(v, r))
+            return false;
+        val = m_util.mk_numeral(r, n->get_sort());
+        for (literal b : m_bits[v]) {
+            if (ctx.get_assignment(b) == l_false)
+                b.neg();
+            lits.push_back(b);
+        }
+        return true;
+    }
+
     bool theory_bv::get_fixed_value(theory_var v, numeral & result)  const {
         result.reset();
         unsigned i = 0;
@@ -589,9 +600,10 @@ namespace smt {
         TRACE("bv", tout << mk_bounded_pp(n, m) << "\n";);
         process_args(n);
         mk_enode(n);
-        if (!ctx.relevancy()) {
+        m_bv2int.push_back(ctx.get_enode(n));
+        ctx.push_trail(push_back_vector<enode_vector>(m_bv2int));
+        if (!ctx.relevancy()) 
             assert_bv2int_axiom(n);
-        }
     }
 
 
@@ -657,10 +669,12 @@ namespace smt {
         mk_enode(n);
         theory_var v = ctx.get_enode(n)->get_th_var(get_id()); 
         mk_bits(v);
-
-        if (!ctx.relevancy()) {
+        enode* k = ctx.get_enode(n->get_arg(0));
+        if (!is_attached_to_var(k))
+            mk_var(k);
+        
+        if (!ctx.relevancy()) 
             assert_int2bv_axiom(n);
-        }
     }
     
     void theory_bv::assert_int2bv_axiom(app* n) {
@@ -872,6 +886,7 @@ namespace smt {
         find_wpos(v);
     }
 
+
     bool theory_bv::internalize_term_core(app * term) {
         SASSERT(term->get_family_id() == get_family_id());
         TRACE("bv", tout << "internalizing term: " << mk_bounded_pp(term, m) << "\n";);
@@ -884,7 +899,11 @@ namespace smt {
         case OP_BSUB:           internalize_sub(term); return true;
         case OP_BMUL:           internalize_mul(term); return true;
         case OP_BSDIV_I:        internalize_sdiv(term); return true;
+#if ENABLE_QUOT_REM_ENCODING
+        case OP_BUDIV_I:        internalize_udiv_quot_rem(term); return true;
+#else
         case OP_BUDIV_I:        internalize_udiv(term); return true;
+#endif
         case OP_BSREM_I:        internalize_srem(term); return true;
         case OP_BUREM_I:        internalize_urem(term); return true;
         case OP_BSMOD_I:        internalize_smod(term); return true;
@@ -982,7 +1001,9 @@ namespace smt {
         process_args(n);                          
         expr_ref_vector arg1_bits(m), arg2_bits(m);
         get_arg_bits(n, 0, arg1_bits);                                                  
-        get_arg_bits(n, 1, arg2_bits);                                                  
+        get_arg_bits(n, 1, arg2_bits);
+        if (ctx.b_internalized(n))
+            return;
         expr_ref le(m);
         if (Signed)
             m_bb.mk_sle(arg1_bits.size(), arg1_bits.data(), arg2_bits.data(), le);
@@ -1297,7 +1318,7 @@ namespace smt {
         SASSERT(consequent.var() != antecedent.var());
         TRACE("bv_bit_prop", tout << "assigning: " << consequent << " @ " << ctx.get_scope_level();
               tout << " using "; ctx.display_literal(tout, antecedent); 
-              tout << " #" << get_enode(v1)->get_owner_id() << " #" << get_enode(v2)->get_owner_id() << " idx: " << idx << "\n";
+              tout << " " << enode_pp(get_enode(v1), ctx) << " " << enode_pp(get_enode(v2), ctx) << " idx: " << idx << "\n";
               tout << "propagate_eqc: " << propagate_eqc << "\n";);
         if (consequent == false_literal) {
             m_stats.m_num_conflicts++;
@@ -1306,6 +1327,7 @@ namespace smt {
         else {
             ctx.assign(consequent, mk_bit_eq_justification(v1, v2, consequent, antecedent));
             if (params().m_bv_eq_axioms) {
+
                 literal_vector lits;
                 lits.push_back(~consequent);
                 lits.push_back(antecedent);
@@ -1328,7 +1350,7 @@ namespace smt {
                     ctx.mk_th_axiom(get_id(), lits.size(), lits.data());
                 }
             }
-     
+        
             if (m_wpos[v2] == idx)
                 find_wpos(v2);
             // REMARK: bit_eq_justification is marked as a theory_bv justification.
@@ -1336,6 +1358,9 @@ namespace smt {
             // So, we need to propagate the assignment to other bits.
             bool_var bv = consequent.var();
             atom * a    = get_bv2a(bv);
+            CTRACE("bv", !a, tout << ctx.literal2expr(literal(bv, false)) << "\n");
+            if (!a)
+                return;
             SASSERT(a->is_bit());
             bit_atom * b = static_cast<bit_atom*>(a);
             var_pos_occ * curr = b->m_occs;
@@ -1354,7 +1379,7 @@ namespace smt {
     }
 
     void theory_bv::relevant_eh(app * n) {
-        TRACE("arith", tout << "relevant: #" << n->get_id() << " " << ctx.e_internalized(n) << ": " << mk_pp(n, m) << "\n";);
+        TRACE("arith", tout << "relevant: #" << n->get_id() << " " << ctx.e_internalized(n) << ": " << mk_bounded_pp(n, m) << "\n";);
         TRACE("bv", tout << "relevant: #" << n->get_id() << " " << ctx.e_internalized(n) << ": " << mk_pp(n, m) << "\n";);
         if (m.is_bool(n)) {
             bool_var v = ctx.get_bool_var(n);
@@ -1376,6 +1401,13 @@ namespace smt {
             ctx.mark_as_relevant(n->get_arg(0));
             assert_int2bv_axiom(n);
         }
+#if ENABLE_QUOT_REM_ENCODING
+        else if (m_util.is_bv_udivi(n)) {
+            ctx.mark_as_relevant(n->get_arg(0));
+            ctx.mark_as_relevant(n->get_arg(1));
+            assert_udiv_quot_rem_axiom(n);
+        }
+#endif
         else if (ctx.e_internalized(n)) {
             enode * e    = ctx.get_enode(n);
             theory_var v = e->get_th_var(get_id());
@@ -1460,6 +1492,7 @@ namespace smt {
         m_approximates_large_bvs(false) {
         memset(m_eq_activity, 0, sizeof(m_eq_activity));
         memset(m_diseq_activity, 0, sizeof(m_diseq_activity));
+        m_bb.set_flat_and_or(false);
     }
 
     theory_bv::~theory_bv() {
@@ -1482,6 +1515,36 @@ namespace smt {
         unsigned sz  = m_bits[v1].size();
         bool changed = true;
         TRACE("bv", tout << "bits size: " << sz << "\n";);
+        if (sz == 0 && !m_bv2int.empty()) {
+            // int2bv(bv2int(x)) = x when int2bv(bv2int(x)) has same sort as x
+            enode* n1 = get_enode(r1);
+            auto propagate_bv2int = [&](enode* bv2int) {
+                enode* bv2int_arg = get_arg(bv2int, 0);
+                for (enode* p : enode::parents(n1->get_root())) {
+                    if (m_util.is_int2bv(p->get_expr()) && p->get_root() != bv2int_arg->get_root() && p->get_sort() == bv2int_arg->get_sort()) {                        
+                        enode_pair_vector eqs;
+                        eqs.push_back({n1, get_arg(p, 0) });
+                        eqs.push_back({n1, bv2int});
+                        justification * js = ctx.mk_justification(
+                            ext_theory_eq_propagation_justification(get_id(), ctx, 0, nullptr, eqs.size(), eqs.data(), p, bv2int_arg));
+                        ctx.assign_eq(p, bv2int_arg, eq_justification(js));
+                        break;
+                    }                    
+                }
+            };
+
+            if (m_bv2int.size() < n1->get_class_size()) {
+                for (enode* bv2int : m_bv2int)
+                    if (bv2int->get_root() == n1->get_root())
+                        propagate_bv2int(bv2int);
+            }
+            else {
+                for (enode* bv2int : *n1) {
+                    if (m_util.is_bv2int(bv2int->get_expr())) 
+                        propagate_bv2int(bv2int);
+                }
+            }
+        }
         do {
             // This outerloop is necessary to avoid missing propagation steps.
             // For example, let's assume that bits1 and bits2 contains the following
@@ -1805,6 +1868,39 @@ namespace smt {
         st.update("bv dynamic eqs", m_stats.m_num_eq_dynamic);
     }
 
+    theory_bv::var_enode_pos theory_bv::get_bv_with_theory(bool_var v, theory_id id) const {
+        atom* a      = get_bv2a(v);
+        svector<var_enode_pos> vec;
+        if (!a->is_bit())
+            return var_enode_pos(nullptr, UINT32_MAX);
+        bit_atom * b = static_cast<bit_atom*>(a);
+        var_pos_occ * curr = b->m_occs;
+        while (curr) {
+            enode* n = get_enode(curr->m_var);
+            if (n->get_th_var(id) != null_theory_var)
+                return var_enode_pos(n, curr->m_idx);
+            curr = curr->m_next;
+        }
+        return var_enode_pos(nullptr, UINT32_MAX);
+    }
+
+    bool_var theory_bv::get_first_unassigned(unsigned start_bit, enode* n) const {
+        theory_var v = n->get_th_var(get_family_id());
+        auto& bits = m_bits[v];
+        unsigned sz = bits.size();
+
+        for (unsigned i = start_bit; i < sz; ++i) {
+            if (ctx.get_assignment(bits[i].var()) == l_undef)
+                return bits[i].var();
+        }
+        for (unsigned i = 0; i < start_bit; ++i) {
+            if (ctx.get_assignment(bits[i].var()) == l_undef)
+                return bits[i].var();
+        }
+
+        return null_bool_var;
+    }
+
     bool theory_bv::check_assignment(theory_var v) {
         if (!is_root(v))
             return true;
@@ -1905,6 +2001,44 @@ namespace smt {
         }
         return true;
     }
+
+#if ENABLE_QUOT_REM_ENCODING
+    void theory_bv::internalize_udiv_quot_rem(app* n) {
+        process_args(n);
+        mk_enode(n);
+        theory_var v = ctx.get_enode(n)->get_th_var(get_id()); 
+        mk_bits(v);
+        if (!ctx.relevancy()) 
+            assert_udiv_quot_rem_axiom(n);
+    }
+
+
+    void theory_bv::assert_udiv_quot_rem_axiom(app * q) {
+        // Axioms for quotient/remainder:
+        //      a = b*q + r
+        //      no-mul-overflow(b,q)
+        //      no-add-overflow(bq, r)
+        //      b != 0 => r < b
+        //      b = 0 => q = -1
+        expr* a, *b;
+        VERIFY(m_util.is_bv_udivi(q, a, b));
+        sort* srt = q->get_sort();
+        func_decl_ref rf(m.mk_func_decl(symbol("rem"), srt, srt, srt), m);
+        expr_ref r(m.mk_app(rf, a, b), m);
+        expr_ref bq(m_util.mk_bv_mul(b, q), m);
+        expr_ref bqr(m_util.mk_bv_add(bq, r), m);
+        literal eq = mk_literal(m.mk_eq(a, bqr));
+        literal obq = mk_literal(m_util.mk_bvumul_no_ovfl(b, q));
+        literal obqr = mk_literal(m_util.mk_ule(r, bqr));
+        literal b0 = mk_literal(m.mk_eq(b, m_util.mk_numeral(rational::zero(), srt)));
+        
+        ctx.mk_th_axiom(get_id(), 1, &eq);
+        ctx.mk_th_axiom(get_id(), 1, &obq);
+        ctx.mk_th_axiom(get_id(), 1, &obqr);
+        ctx.mk_th_axiom(get_id(), b0, ~mk_literal(m_util.mk_ule(b, r)));
+        ctx.mk_th_axiom(get_id(), ~b0, mk_literal(m.mk_eq(q, m_util.mk_numeral(rational(-1), srt))));
+    }
+#endif
 
 
 };

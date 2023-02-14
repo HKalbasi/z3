@@ -18,11 +18,27 @@ jobs:
     displayName: Build
     inputs:
       script:
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{parameters.BuildArchitecture}} &&
+         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{parameters.BuildArchitecture}} &&
         python scripts\mk_win_dist.py
             --${{parameters.BuildArchitecture}}-only
             --dotnet-key=$(Build.SourcesDirectory)/resources/z3.snk
-  - task: EsrpCodeSigning@1
+  - task: CopyFiles@2
+    displayName: 'Collect Symbols'
+    inputs:
+      sourceFolder: dist
+      contents: '**/*.pdb'
+      targetFolder: '$(Build.ArtifactStagingDirectory)/symbols'
+  # Publish symbol archive to match nuget package
+  # Index your source code and publish symbols to a file share or Azure Artifacts symbol server
+  - task: PublishSymbols@2
+    inputs:
+      symbolsFolder: '$(Build.ArtifactStagingDirectory)/symbols'
+      searchPattern: '**/*.pdb' 
+      indexSources: false # Github sources not supported
+      publishSymbols: true
+      symbolServerType: TeamServices
+      detailedLog: true
+  - task: EsrpCodeSigning@2
     displayName: Sign
     inputs:
       ConnectedServiceName: 'z3-esrp-signing-2'

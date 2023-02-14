@@ -24,7 +24,7 @@ namespace array {
             out << "array\n";
         for (unsigned i = 0; i < get_num_vars(); ++i) {
             auto& d = get_var_data(i);
-            out << var2enode(i)->get_expr_id() << " " << (d.m_prop_upward?"up":"fx") << " " << mk_bounded_pp(var2expr(i), m, 2) << "\n";
+            out << "v" << i << ": " << var2enode(i)->get_expr_id() << " " << (d.m_prop_upward?"up":"fx") << " " << mk_bounded_pp(var2expr(i), m, 2) << "\n";
             display_info(out, "parent lambdas", d.m_parent_lambdas);
             display_info(out, "parent select", d.m_parent_selects);
             display_info(out, "lambdas", d.m_lambdas);
@@ -93,8 +93,10 @@ namespace array {
                         validate_extensionality(n, k);
             }
             expr* x = nullptr, *y = nullptr;
+#if 0
             if (m.is_eq(n->get_expr(), x, y) && a.is_array(x))
                 std::cout << ctx.bpp(n) << " " << s().value(n->bool_var()) << "\n";
+#endif
             if (m.is_eq(n->get_expr(), x, y) && a.is_array(x) && s().value(n->bool_var()) == l_false)
                 validate_extensionality(expr2enode(x), expr2enode(y));
         }        

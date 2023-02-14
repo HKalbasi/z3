@@ -48,7 +48,7 @@ Revision History:
 // clear to the compiler what instructions should be used. E.g., for sqrt(), the Windows compiler selects
 // the x87 FPU, even when /arch:SSE2 is on.
 // Luckily, these are kind of standardized, at least for Windows/Linux/macOS.
-#if defined(__clang__) || defined(_M_ARM) && defined(_M_ARM64)
+#if (defined(__clang__) && !defined(__MINGW32__)) || defined(_M_ARM) && defined(_M_ARM64)
 #undef USE_INTRINSICS
 #endif
 
@@ -312,13 +312,7 @@ void hwf_manager::round_to_integral(mpf_rounding_mode rm, hwf const & x, hwf & o
 }
 
 void hwf_manager::rem(hwf const & x, hwf const & y, hwf & o) {
-#if defined(_WINDOWS) && _MSC_VER <= 1700
-    o.value = fmod(x.value, y.value);
-    if (o.value >= (y.value/2.0))
-        o.value -= y.value;
-#else
     o.value = remainder(x.value, y.value);
-#endif
 }
 
 void hwf_manager::maximum(hwf const & x, hwf const & y, hwf & o) {
